@@ -1,6 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 import psycopg2
 import requests
 import os
@@ -21,20 +20,14 @@ DB_NAME = "kb_chatbot"
 DB_USER = "postgres"
 DB_PASSWORD = "Aanya2612"
 
-CHAT_MODEL = "qwen2.5:7b"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 KNOWLEDGE_BASE_FOLDER = "knowledge_base"
 UPLOAD_FOLDER = "uploads"
 UI_FILE = "kb_chat.html"
 
-MAX_CHUNK_SIZE = 700
+MAX_CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
-
-
-class ChatRequest(BaseModel):
-    question: str
-    session_id: int | None = None
 
 
 def get_db_connection():
@@ -207,48 +200,134 @@ def is_supported_file(file_path):
     return extension in supported_extensions
 
 
-def split_text_into_chunks(text):
-    text = clean_text(text)
-    paragraphs = text.split("\n\n")
+def recursive_split(text, separators):
+    if len(text) <= MAX_CHUNK_SIZE:
+        return [text]
+
+    if not separators:
+        chunks = []
+
+        for i in range(0, len(text), MAX_CHUNK_SIZE):
+            chunks.append(text[i:i + MAX_CHUNK_SIZE])
+
+        return chunks
+
+    separator = separators[0]
+    parts = text.split(separator)
+
+    if len(parts) == 1:
+        return recursive_split(text, separators[1:])
 
     chunks = []
-    current_chunk = ""
+    current = ""
 
-    for paragraph in paragraphs:
-        paragraph = paragraph.strip()
+    for part in parts:
+        part = part.strip()
 
-        if not paragraph:
+        if not part:
             continue
 
-        if len(current_chunk) + len(paragraph) <= MAX_CHUNK_SIZE:
-            current_chunk += "\n\n" + paragraph
+        if current:
+            candidate = current + separator + part
         else:
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
+            candidate = part
 
-            overlap = current_chunk[-CHUNK_OVERLAP:] if current_chunk else ""
-            current_chunk = overlap + "\n\n" + paragraph
+        if len(candidate) <= MAX_CHUNK_SIZE:
+            current = candidate
+        else:
+            if current:
+                chunks.extend(recursive_split(current, separators[1:]))
 
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
+            current = part
+
+    if current:
+        chunks.extend(recursive_split(current, separators[1:]))
 
     return chunks
 
 
+def add_overlap(chunks):
+    final_chunks = []
+
+    for chunk in chunks:
+        chunk = chunk.strip()
+
+        if not chunk:
+            continue
+
+        if not final_chunks:
+            final_chunks.append(chunk)
+        else:
+            previous = final_chunks[-1]
+            overlap_text = previous[-CHUNK_OVERLAP:]
+
+            combined = overlap_text + "\n" + chunk
+
+            if len(combined) <= MAX_CHUNK_SIZE + CHUNK_OVERLAP:
+                final_chunks.append(combined.strip())
+            else:
+                final_chunks.append(chunk)
+
+    return final_chunks
+
+
+def split_text_into_chunks(text):
+    text = clean_text(text)
+
+    separators = [
+        "\n\n",
+        "\n",
+        ". ",
+        "; ",
+        ", ",
+        " "
+    ]
+
+    raw_chunks = recursive_split(text, separators)
+
+    safe_chunks = []
+
+    for chunk in raw_chunks:
+        if len(chunk) <= MAX_CHUNK_SIZE:
+            safe_chunks.append(chunk)
+        else:
+            for i in range(0, len(chunk), MAX_CHUNK_SIZE):
+                safe_chunks.append(chunk[i:i + MAX_CHUNK_SIZE])
+
+    final_chunks = add_overlap(safe_chunks)
+
+    cleaned_chunks = []
+
+    for chunk in final_chunks:
+        chunk = chunk.strip()
+
+        if len(chunk) > 30:
+            cleaned_chunks.append(chunk)
+
+    return cleaned_chunks
+
+
 def generate_embedding(text):
+    print("Generating embedding | length:", len(text))
+
     response = requests.post(
         "http://localhost:11434/api/embeddings",
         json={
             "model": EMBEDDING_MODEL,
             "prompt": text
-        }
+        },
+        timeout=120
     )
 
-    response.raise_for_status()
+    if response.status_code != 200:
+        print("Embedding failed")
+        print(response.text)
+        raise Exception("Embedding API failed")
+
     return response.json()["embedding"]
 
 
-def index_file(file_path, source_type):
+def index_file(file_path, source_type, force_reindex=False):
     absolute_path = os.path.abspath(file_path)
     original_filename = os.path.basename(file_path)
     metadata = get_file_metadata(file_path)
@@ -259,6 +338,7 @@ def index_file(file_path, source_type):
     print("Filename:", original_filename)
     print("Path:", absolute_path)
     print("Source:", source_type)
+    print("Force reindex:", force_reindex)
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -281,49 +361,51 @@ def index_file(file_path, source_type):
         old_modified = existing_by_path[3]
         old_version = existing_by_path[4]
 
-        if old_size == metadata["file_size"] and old_modified == metadata["last_modified"]:
-            cursor.close()
-            conn.close()
+        if not force_reindex:
+            if old_size == metadata["file_size"] and old_modified == metadata["last_modified"]:
+                cursor.close()
+                conn.close()
 
-            print("Status: unchanged file path. Skipped.")
+                print("Status: unchanged file path. Skipped.")
 
-            return {
-                "filename": original_filename,
-                "status": "skipped_unchanged",
-                "message": "File already indexed and unchanged."
-            }
+                return {
+                    "filename": original_filename,
+                    "status": "skipped_unchanged",
+                    "message": "File already indexed and unchanged."
+                }
 
         new_hash = calculate_file_hash(file_path)
 
-        if new_hash == old_hash:
-            cursor.execute(
-                """
-                UPDATE documents
-                SET file_size = %s,
-                    last_modified = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE document_id = %s
-                """,
-                (
-                    metadata["file_size"],
-                    metadata["last_modified"],
-                    document_id
+        if not force_reindex:
+            if new_hash == old_hash:
+                cursor.execute(
+                    """
+                    UPDATE documents
+                    SET file_size = %s,
+                        last_modified = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE document_id = %s
+                    """,
+                    (
+                        metadata["file_size"],
+                        metadata["last_modified"],
+                        document_id
+                    )
                 )
-            )
 
-            conn.commit()
-            cursor.close()
-            conn.close()
+                conn.commit()
+                cursor.close()
+                conn.close()
 
-            print("Status: metadata changed but content same. Skipped re-index.")
+                print("Status: metadata changed but content same. Skipped re-index.")
 
-            return {
-                "filename": original_filename,
-                "status": "skipped_same_hash",
-                "message": "Metadata changed but content is same."
-            }
+                return {
+                    "filename": original_filename,
+                    "status": "skipped_same_hash",
+                    "message": "Metadata changed but content is same."
+                }
 
-        print("Status: updated document detected.")
+        print("Status: re-indexing existing document.")
         print("Deleting old chunks for document_id:", document_id)
 
         cursor.execute(
@@ -382,11 +464,11 @@ def index_file(file_path, source_type):
         cursor.close()
         conn.close()
 
-        print("Status: updated and re-indexed.")
+        print("Status: existing document re-indexed.")
 
         return {
             "filename": original_filename,
-            "status": "updated_reindexed",
+            "status": "reindexed",
             "chunks": len(chunks),
             "version": old_version + 1
         }
@@ -404,7 +486,7 @@ def index_file(file_path, source_type):
 
     existing_by_hash = cursor.fetchone()
 
-    if existing_by_hash:
+    if existing_by_hash and not force_reindex:
         cursor.close()
         conn.close()
 
@@ -475,12 +557,13 @@ def index_file(file_path, source_type):
     }
 
 
-def scan_knowledge_base():
+def scan_knowledge_base(force_reindex=False):
     ensure_folders()
 
     print("\n" + "=" * 80)
     print("SCANNING KNOWLEDGE BASE")
     print("=" * 80)
+    print("Force reindex:", force_reindex)
 
     results = []
 
@@ -489,7 +572,7 @@ def scan_knowledge_base():
             file_path = os.path.join(root, filename)
 
             if is_supported_file(file_path):
-                result = index_file(file_path, "knowledge_base")
+                result = index_file(file_path, "knowledge_base", force_reindex)
                 results.append(result)
             else:
                 results.append({
@@ -553,11 +636,12 @@ def db_check():
 
 
 @app.post("/index-knowledge-base")
-def index_knowledge_base():
-    results = scan_knowledge_base()
+def index_knowledge_base(force: bool = False):
+    results = scan_knowledge_base(force)
 
     return {
         "message": "Knowledge base indexing completed.",
+        "force_reindex": force,
         "results": results
     }
 
@@ -582,7 +666,7 @@ def upload_documents(files: list[UploadFile] = File(...)):
             })
             continue
 
-        result = index_file(save_path, "user_upload")
+        result = index_file(save_path, "user_upload", False)
         results.append(result)
 
     return {
