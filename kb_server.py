@@ -1,5 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import psycopg2
 import requests
 import os
@@ -20,6 +21,7 @@ DB_NAME = "kb_chatbot"
 DB_USER = "postgres"
 DB_PASSWORD = "Aanya2612"
 
+CHAT_MODEL = "qwen2.5:7b"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 KNOWLEDGE_BASE_FOLDER = "knowledge_base"
@@ -28,6 +30,19 @@ UI_FILE = "kb_chat.html"
 
 MAX_CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
+
+VECTOR_TOP_K = 25
+KEYWORD_TOP_K = 25
+FINAL_TOP_K = 5
+
+
+class RetrieveRequest(BaseModel):
+    question: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    session_id: int | None = None
 
 
 def get_db_connection():
@@ -227,10 +242,7 @@ def recursive_split(text, separators):
         if not part:
             continue
 
-        if current:
-            candidate = current + separator + part
-        else:
-            candidate = part
+        candidate = current + separator + part if current else part
 
         if len(candidate) <= MAX_CHUNK_SIZE:
             current = candidate
@@ -525,7 +537,6 @@ def index_file(file_path, source_type, force_reindex=False):
 
     for index, chunk in enumerate(chunks, start=1):
         print(f"Embedding chunk {index}/{len(chunks)}")
-
         embedding = generate_embedding(chunk)
 
         cursor.execute(
@@ -580,6 +591,285 @@ def scan_knowledge_base(force_reindex=False):
                 })
 
     return results
+
+
+def get_vector_rows(cursor, question):
+    question_embedding = generate_embedding(question)
+
+    cursor.execute(
+        """
+        SELECT 
+            c.chunk_id,
+            c.document_id,
+            d.original_filename,
+            c.chunk_number,
+            c.content,
+            c.embedding <=> %s::vector AS distance
+        FROM document_chunks c
+        JOIN documents d
+        ON c.document_id = d.document_id
+        ORDER BY c.embedding <=> %s::vector
+        LIMIT %s
+        """,
+        (
+            str(question_embedding),
+            str(question_embedding),
+            VECTOR_TOP_K
+        )
+    )
+
+    return cursor.fetchall()
+
+
+def get_keyword_rows(cursor, question):
+    keywords = tokenize(question)
+
+    if not keywords:
+        return []
+
+    conditions = []
+    params = []
+
+    for keyword in keywords:
+        conditions.append("c.content ILIKE %s")
+        params.append("%" + keyword + "%")
+
+    query = f"""
+        SELECT 
+            c.chunk_id,
+            c.document_id,
+            d.original_filename,
+            c.chunk_number,
+            c.content,
+            1.0 AS distance
+        FROM document_chunks c
+        JOIN documents d
+        ON c.document_id = d.document_id
+        WHERE {" OR ".join(conditions)}
+        LIMIT %s
+    """
+
+    params.append(KEYWORD_TOP_K)
+
+    cursor.execute(query, params)
+    return cursor.fetchall()
+
+
+def merge_retrieval_results(vector_rows, keyword_rows):
+    merged = {}
+
+    for row in vector_rows:
+        chunk_id = row[0]
+
+        merged[chunk_id] = {
+            "chunk_id": row[0],
+            "document_id": row[1],
+            "filename": row[2],
+            "chunk_number": row[3],
+            "content": row[4],
+            "vector_distance": float(row[5]),
+            "from_vector": True,
+            "from_keyword": False
+        }
+
+    for row in keyword_rows:
+        chunk_id = row[0]
+
+        if chunk_id in merged:
+            merged[chunk_id]["from_keyword"] = True
+        else:
+            merged[chunk_id] = {
+                "chunk_id": row[0],
+                "document_id": row[1],
+                "filename": row[2],
+                "chunk_number": row[3],
+                "content": row[4],
+                "vector_distance": float(row[5]),
+                "from_vector": False,
+                "from_keyword": True
+            }
+
+    return list(merged.values())
+
+
+def rerank_chunks(chunks, question):
+    question_words = set(tokenize(question))
+
+    reranked = []
+
+    for chunk in chunks:
+        content_words = set(tokenize(chunk["content"]))
+
+        keyword_hits = len(question_words.intersection(content_words))
+        vector_score = 1 / (1 + chunk["vector_distance"])
+
+        source_bonus = 0
+
+        if chunk["from_vector"]:
+            source_bonus += 0.5
+
+        if chunk["from_keyword"]:
+            source_bonus += 1.0
+
+        exact_phrase_bonus = 0
+
+        if question.lower().strip() in chunk["content"].lower():
+            exact_phrase_bonus = 3.0
+
+        final_score = keyword_hits + vector_score + source_bonus + exact_phrase_bonus
+
+        chunk["keyword_hits"] = keyword_hits
+        chunk["vector_score"] = vector_score
+        chunk["final_score"] = final_score
+
+        reranked.append(chunk)
+
+    reranked.sort(key=lambda item: item["final_score"], reverse=True)
+
+    return reranked[:FINAL_TOP_K]
+
+
+def retrieve_relevant_chunks(question):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    vector_rows = get_vector_rows(cursor, question)
+    keyword_rows = get_keyword_rows(cursor, question)
+
+    merged_chunks = merge_retrieval_results(vector_rows, keyword_rows)
+    best_chunks = rerank_chunks(merged_chunks, question)
+
+    cursor.close()
+    conn.close()
+
+    print("\n" + "=" * 80)
+    print("RETRIEVAL RESULT")
+    print("=" * 80)
+
+    for index, chunk in enumerate(best_chunks, start=1):
+        print("Rank:", index)
+        print("File:", chunk["filename"])
+        print("Chunk:", chunk["chunk_number"])
+        print("Final Score:", round(chunk["final_score"], 4))
+        print("Preview:", chunk["content"][:300])
+        print("-" * 80)
+
+    return best_chunks
+
+
+def create_session_if_needed(session_id, first_question):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if session_id is not None:
+        cursor.close()
+        conn.close()
+        return session_id
+
+    title = first_question[:60]
+
+    cursor.execute(
+        """
+        INSERT INTO chat_sessions(title)
+        VALUES (%s)
+        RETURNING session_id
+        """,
+        (title,)
+    )
+
+    new_session_id = cursor.fetchone()[0]
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return new_session_id
+
+
+def save_message(session_id, role, message):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO chat_messages(session_id, role, message)
+        VALUES (%s, %s, %s)
+        """,
+        (
+            session_id,
+            role,
+            message
+        )
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def generate_answer(question, chunks):
+    context_parts = []
+
+    for index, chunk in enumerate(chunks, start=1):
+        context_parts.append(
+            f"Source {index}\n"
+            f"File: {chunk['filename']}\n"
+            f"Chunk: {chunk['chunk_number']}\n"
+            f"Content:\n{chunk['content']}"
+        )
+
+    context = "\n\n-------------------------\n\n".join(context_parts)
+
+    system_prompt = """
+You are a strict knowledge-base assistant.
+
+Use only the given knowledge base content.
+
+Rules:
+- Answer only from the given content.
+- Do not use outside knowledge.
+- Do not guess missing facts.
+- Do not invent names, numbers, dates, policies, rules, or facts.
+- If the exact answer is not present, mention what related information is available and ask the user to clarify.
+- If the question is vague, summarize the most relevant information from the retrieved content.
+- Keep the answer clear, professional, and structured.
+- Do not say "based on context" or "retrieved chunks".
+"""
+
+    user_prompt = f"""
+Knowledge base content:
+{context}
+
+User question:
+{question}
+
+Give the final answer only.
+"""
+
+    response = requests.post(
+        "http://localhost:11434/api/chat",
+        json={
+            "model": CHAT_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            "stream": False
+        },
+        timeout=180
+    )
+
+    if response.status_code != 200:
+        print(response.text)
+        raise Exception("Chat model failed")
+
+    return response.json()["message"]["content"].strip()
 
 
 @app.on_event("startup")
@@ -721,6 +1011,126 @@ def list_documents():
                 "chunks": row[4],
                 "indexed_at": str(row[5]),
                 "updated_at": str(row[6])
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/retrieve")
+def retrieve(request: RetrieveRequest):
+    chunks = retrieve_relevant_chunks(request.question)
+
+    return {
+        "question": request.question,
+        "chunks": [
+            {
+                "rank": index + 1,
+                "filename": chunk["filename"],
+                "chunk_number": chunk["chunk_number"],
+                "final_score": round(chunk["final_score"], 4),
+                "keyword_hits": chunk["keyword_hits"],
+                "from_vector": chunk["from_vector"],
+                "from_keyword": chunk["from_keyword"],
+                "content_preview": chunk["content"][:700]
+            }
+            for index, chunk in enumerate(chunks)
+        ]
+    }
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+    session_id = create_session_if_needed(request.session_id, request.question)
+
+    save_message(session_id, "user", request.question)
+
+    chunks = retrieve_relevant_chunks(request.question)
+
+    if not chunks:
+        answer = "No relevant knowledge base content was found. Please index or upload documents first."
+        save_message(session_id, "assistant", answer)
+
+        return {
+            "session_id": session_id,
+            "answer": answer,
+            "sources": []
+        }
+
+    answer = generate_answer(request.question, chunks)
+
+    save_message(session_id, "assistant", answer)
+
+    return {
+        "session_id": session_id,
+        "answer": answer,
+        "sources": [
+            {
+                "filename": chunk["filename"],
+                "chunk_number": chunk["chunk_number"],
+                "score": round(chunk["final_score"], 4)
+            }
+            for chunk in chunks
+        ]
+    }
+
+
+@app.get("/sessions")
+def get_sessions():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT session_id, title, created_at
+        FROM chat_sessions
+        ORDER BY created_at DESC;
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return {
+        "sessions": [
+            {
+                "session_id": row[0],
+                "title": row[1],
+                "created_at": str(row[2])
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/sessions/{session_id}/messages")
+def get_session_messages(session_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT role, message, created_at
+        FROM chat_messages
+        WHERE session_id = %s
+        ORDER BY created_at ASC;
+        """,
+        (session_id,)
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return {
+        "messages": [
+            {
+                "role": row[0],
+                "message": row[1],
+                "created_at": str(row[2])
             }
             for row in rows
         ]
