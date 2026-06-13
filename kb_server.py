@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import FileResponse
 import psycopg2
 import requests
@@ -260,7 +260,6 @@ def add_overlap(chunks):
         else:
             previous = final_chunks[-1]
             overlap_text = previous[-CHUNK_OVERLAP:]
-
             combined = overlap_text + "\n" + chunk
 
             if len(combined) <= MAX_CHUNK_SIZE + CHUNK_OVERLAP:
@@ -647,12 +646,21 @@ def index_knowledge_base(force: bool = False):
 
 
 @app.post("/upload")
-def upload_documents(files: list[UploadFile] = File(...)):
+async def upload_documents(request: Request):
     ensure_folders()
+
+    form = await request.form()
+    uploaded_files = form.getlist("files")
 
     results = []
 
-    for file in files:
+    if not uploaded_files:
+        return {
+            "message": "No files received.",
+            "results": []
+        }
+
+    for file in uploaded_files:
         safe_filename = os.path.basename(file.filename)
         save_path = os.path.join(UPLOAD_FOLDER, safe_filename)
 
