@@ -31,18 +31,23 @@ UI_FILE = "kb_chat.html"
 MAX_CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 
-VECTOR_TOP_K = 25
-KEYWORD_TOP_K = 25
-FINAL_TOP_K = 5
+VECTOR_TOP_K = 35
+KEYWORD_TOP_K = 35
+FINAL_TOP_K = 8
+
+NEIGHBOR_WINDOW = 2
+MAX_CONTEXT_CHUNKS = 22
 
 
 class RetrieveRequest(BaseModel):
     question: str
+    document_ids: list[int] = []
 
 
 class ChatRequest(BaseModel):
     question: str
     session_id: int | None = None
+    document_ids: list[int] = []
 
 
 def get_db_connection():
@@ -220,12 +225,10 @@ def recursive_split(text, separators):
         return [text]
 
     if not separators:
-        chunks = []
-
-        for i in range(0, len(text), MAX_CHUNK_SIZE):
-            chunks.append(text[i:i + MAX_CHUNK_SIZE])
-
-        return chunks
+        return [
+            text[i:i + MAX_CHUNK_SIZE]
+            for i in range(0, len(text), MAX_CHUNK_SIZE)
+        ]
 
     separator = separators[0]
     parts = text.split(separator)
@@ -307,15 +310,11 @@ def split_text_into_chunks(text):
 
     final_chunks = add_overlap(safe_chunks)
 
-    cleaned_chunks = []
-
-    for chunk in final_chunks:
-        chunk = chunk.strip()
-
-        if len(chunk) > 30:
-            cleaned_chunks.append(chunk)
-
-    return cleaned_chunks
+    return [
+        chunk.strip()
+        for chunk in final_chunks
+        if len(chunk.strip()) > 30
+    ]
 
 
 def generate_embedding(text):
@@ -366,11 +365,7 @@ def index_file(file_path, source_type, force_reindex=False):
     existing_by_path = cursor.fetchone()
 
     if existing_by_path:
-        document_id = existing_by_path[0]
-        old_hash = existing_by_path[1]
-        old_size = existing_by_path[2]
-        old_modified = existing_by_path[3]
-        old_version = existing_by_path[4]
+        document_id, old_hash, old_size, old_modified, old_version = existing_by_path
 
         if not force_reindex:
             if old_size == metadata["file_size"] and old_modified == metadata["last_modified"]:
@@ -563,6 +558,7 @@ def index_file(file_path, source_type, force_reindex=False):
     return {
         "filename": original_filename,
         "status": "indexed_new",
+        "document_id": document_id,
         "chunks": len(chunks)
     }
 
@@ -593,11 +589,21 @@ def scan_knowledge_base(force_reindex=False):
     return results
 
 
-def get_vector_rows(cursor, question):
-    question_embedding = generate_embedding(question)
+def build_document_filter(document_ids):
+    if not document_ids:
+        return "", []
 
-    cursor.execute(
-        """
+    placeholders = ",".join(["%s"] * len(document_ids))
+    return f" AND c.document_id IN ({placeholders}) ", document_ids
+
+
+def get_vector_rows(cursor, question, document_ids=None):
+    question_embedding = generate_embedding(question)
+    document_ids = document_ids or []
+
+    filter_sql, filter_params = build_document_filter(document_ids)
+
+    query = f"""
         SELECT 
             c.chunk_id,
             c.document_id,
@@ -608,31 +614,34 @@ def get_vector_rows(cursor, question):
         FROM document_chunks c
         JOIN documents d
         ON c.document_id = d.document_id
+        WHERE 1=1
+        {filter_sql}
         ORDER BY c.embedding <=> %s::vector
         LIMIT %s
-        """,
-        (
-            str(question_embedding),
-            str(question_embedding),
-            VECTOR_TOP_K
-        )
-    )
+    """
+
+    params = [str(question_embedding)] + filter_params + [str(question_embedding), VECTOR_TOP_K]
+
+    cursor.execute(query, params)
 
     return cursor.fetchall()
 
 
-def get_keyword_rows(cursor, question):
+def get_keyword_rows(cursor, question, document_ids=None):
     keywords = tokenize(question)
+    document_ids = document_ids or []
 
     if not keywords:
         return []
 
-    conditions = []
+    keyword_conditions = []
     params = []
 
     for keyword in keywords:
-        conditions.append("c.content ILIKE %s")
+        keyword_conditions.append("c.content ILIKE %s")
         params.append("%" + keyword + "%")
+
+    document_filter_sql, document_filter_params = build_document_filter(document_ids)
 
     query = f"""
         SELECT 
@@ -645,13 +654,15 @@ def get_keyword_rows(cursor, question):
         FROM document_chunks c
         JOIN documents d
         ON c.document_id = d.document_id
-        WHERE {" OR ".join(conditions)}
+        WHERE ({" OR ".join(keyword_conditions)})
+        {document_filter_sql}
         LIMIT %s
     """
 
-    params.append(KEYWORD_TOP_K)
+    params = params + document_filter_params + [KEYWORD_TOP_K]
 
     cursor.execute(query, params)
+
     return cursor.fetchall()
 
 
@@ -669,7 +680,8 @@ def merge_retrieval_results(vector_rows, keyword_rows):
             "content": row[4],
             "vector_distance": float(row[5]),
             "from_vector": True,
-            "from_keyword": False
+            "from_keyword": False,
+            "retrieval_type": "direct"
         }
 
     for row in keyword_rows:
@@ -686,7 +698,8 @@ def merge_retrieval_results(vector_rows, keyword_rows):
                 "content": row[4],
                 "vector_distance": float(row[5]),
                 "from_vector": False,
-                "from_keyword": True
+                "from_keyword": True,
+                "retrieval_type": "direct"
             }
 
     return list(merged.values())
@@ -694,7 +707,6 @@ def merge_retrieval_results(vector_rows, keyword_rows):
 
 def rerank_chunks(chunks, question):
     question_words = set(tokenize(question))
-
     reranked = []
 
     for chunk in chunks:
@@ -726,35 +738,124 @@ def rerank_chunks(chunks, question):
 
     reranked.sort(key=lambda item: item["final_score"], reverse=True)
 
-    return reranked[:FINAL_TOP_K]
+    return reranked
 
 
-def retrieve_relevant_chunks(question):
+def fetch_neighbor_chunks(cursor, ranked_chunks):
+    neighbor_map = {}
+
+    for chunk in ranked_chunks:
+        document_id = chunk["document_id"]
+        center_chunk_number = chunk["chunk_number"]
+
+        start_chunk = max(1, center_chunk_number - NEIGHBOR_WINDOW)
+        end_chunk = center_chunk_number + NEIGHBOR_WINDOW
+
+        cursor.execute(
+            """
+            SELECT 
+                c.chunk_id,
+                c.document_id,
+                d.original_filename,
+                c.chunk_number,
+                c.content
+            FROM document_chunks c
+            JOIN documents d
+            ON c.document_id = d.document_id
+            WHERE c.document_id = %s
+              AND c.chunk_number BETWEEN %s AND %s
+            ORDER BY c.chunk_number ASC
+            """,
+            (
+                document_id,
+                start_chunk,
+                end_chunk
+            )
+        )
+
+        rows = cursor.fetchall()
+
+        for row in rows:
+            chunk_id = row[0]
+
+            if chunk_id not in neighbor_map:
+                neighbor_map[chunk_id] = {
+                    "chunk_id": row[0],
+                    "document_id": row[1],
+                    "filename": row[2],
+                    "chunk_number": row[3],
+                    "content": row[4],
+                    "vector_distance": chunk["vector_distance"],
+                    "from_vector": chunk["from_vector"],
+                    "from_keyword": chunk["from_keyword"],
+                    "retrieval_type": "neighbor_expansion",
+                    "keyword_hits": chunk.get("keyword_hits", 0),
+                    "vector_score": chunk.get("vector_score", 0),
+                    "final_score": chunk.get("final_score", 0)
+                }
+
+    return list(neighbor_map.values())
+
+
+def build_context_chunks(cursor, ranked_chunks):
+    direct_chunks = ranked_chunks[:FINAL_TOP_K]
+    neighbor_chunks = fetch_neighbor_chunks(cursor, direct_chunks)
+
+    combined = {}
+
+    for chunk in direct_chunks + neighbor_chunks:
+        combined[chunk["chunk_id"]] = chunk
+
+    combined_chunks = list(combined.values())
+
+    combined_chunks.sort(
+        key=lambda item: (
+            item["document_id"],
+            item["chunk_number"]
+        )
+    )
+
+    return combined_chunks[:MAX_CONTEXT_CHUNKS]
+
+
+def retrieve_relevant_chunks(question, document_ids=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    vector_rows = get_vector_rows(cursor, question)
-    keyword_rows = get_keyword_rows(cursor, question)
+    document_ids = document_ids or []
+
+    print("\n" + "=" * 80)
+    print("RETRIEVAL STARTED")
+    print("=" * 80)
+    print("Question:", question)
+    print("Document filter:", document_ids if document_ids else "ALL DOCUMENTS")
+
+    vector_rows = get_vector_rows(cursor, question, document_ids)
+    keyword_rows = get_keyword_rows(cursor, question, document_ids)
 
     merged_chunks = merge_retrieval_results(vector_rows, keyword_rows)
-    best_chunks = rerank_chunks(merged_chunks, question)
+    ranked_chunks = rerank_chunks(merged_chunks, question)
+
+    final_chunks = build_context_chunks(cursor, ranked_chunks)
 
     cursor.close()
     conn.close()
 
     print("\n" + "=" * 80)
-    print("RETRIEVAL RESULT")
+    print("FINAL CONTEXT CHUNKS")
     print("=" * 80)
 
-    for index, chunk in enumerate(best_chunks, start=1):
-        print("Rank:", index)
+    for index, chunk in enumerate(final_chunks, start=1):
+        print("Context Rank:", index)
+        print("Document ID:", chunk["document_id"])
         print("File:", chunk["filename"])
         print("Chunk:", chunk["chunk_number"])
-        print("Final Score:", round(chunk["final_score"], 4))
+        print("Retrieval Type:", chunk["retrieval_type"])
+        print("Score:", round(chunk["final_score"], 4))
         print("Preview:", chunk["content"][:300])
         print("-" * 80)
 
-    return best_chunks
+    return final_chunks
 
 
 def create_session_if_needed(session_id, first_question):
@@ -813,6 +914,7 @@ def generate_answer(question, chunks):
     for index, chunk in enumerate(chunks, start=1):
         context_parts.append(
             f"Source {index}\n"
+            f"Document ID: {chunk['document_id']}\n"
             f"File: {chunk['filename']}\n"
             f"Chunk: {chunk['chunk_number']}\n"
             f"Content:\n{chunk['content']}"
@@ -830,8 +932,10 @@ Rules:
 - Do not use outside knowledge.
 - Do not guess missing facts.
 - Do not invent names, numbers, dates, policies, rules, or facts.
-- If the exact answer is not present, mention what related information is available and ask the user to clarify.
+- If multiple related points are present, include all relevant points.
+- If the exact answer is spread across multiple chunks, combine them into one complete answer.
 - If the question is vague, summarize the most relevant information from the retrieved content.
+- If the user asks "this pdf" or "this document", answer only from the selected document content that was provided.
 - Keep the answer clear, professional, and structured.
 - Do not say "based on context" or "retrieved chunks".
 """
@@ -1019,15 +1123,22 @@ def list_documents():
 
 @app.post("/retrieve")
 def retrieve(request: RetrieveRequest):
-    chunks = retrieve_relevant_chunks(request.question)
+    chunks = retrieve_relevant_chunks(
+        request.question,
+        request.document_ids
+    )
 
     return {
         "question": request.question,
+        "document_ids": request.document_ids,
+        "search_scope": "selected_documents" if request.document_ids else "all_documents",
         "chunks": [
             {
                 "rank": index + 1,
+                "document_id": chunk["document_id"],
                 "filename": chunk["filename"],
                 "chunk_number": chunk["chunk_number"],
+                "retrieval_type": chunk["retrieval_type"],
                 "final_score": round(chunk["final_score"], 4),
                 "keyword_hits": chunk["keyword_hits"],
                 "from_vector": chunk["from_vector"],
@@ -1041,14 +1152,20 @@ def retrieve(request: RetrieveRequest):
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    session_id = create_session_if_needed(request.session_id, request.question)
+    session_id = create_session_if_needed(
+        request.session_id,
+        request.question
+    )
 
     save_message(session_id, "user", request.question)
 
-    chunks = retrieve_relevant_chunks(request.question)
+    chunks = retrieve_relevant_chunks(
+        request.question,
+        request.document_ids
+    )
 
     if not chunks:
-        answer = "No relevant knowledge base content was found. Please index or upload documents first."
+        answer = "No relevant knowledge base content was found for the selected document scope."
         save_message(session_id, "assistant", answer)
 
         return {
@@ -1064,10 +1181,14 @@ def chat(request: ChatRequest):
     return {
         "session_id": session_id,
         "answer": answer,
+        "search_scope": "selected_documents" if request.document_ids else "all_documents",
+        "document_ids": request.document_ids,
         "sources": [
             {
+                "document_id": chunk["document_id"],
                 "filename": chunk["filename"],
                 "chunk_number": chunk["chunk_number"],
+                "retrieval_type": chunk["retrieval_type"],
                 "score": round(chunk["final_score"], 4)
             }
             for chunk in chunks
