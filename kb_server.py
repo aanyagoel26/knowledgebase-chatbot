@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import psycopg2
+from psycopg2.extras import execute_values
 import requests
 import os
 import shutil
@@ -14,7 +15,9 @@ from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
 
+
 app = FastAPI()
+
 
 DB_HOST = "localhost"
 DB_NAME = "kb_chatbot"
@@ -31,12 +34,15 @@ UI_FILE = "kb_chat.html"
 MAX_CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 
-VECTOR_TOP_K = 35
-KEYWORD_TOP_K = 35
-FINAL_TOP_K = 8
+PER_DOCUMENT_VECTOR_TOP_K = 12
+PER_DOCUMENT_KEYWORD_TOP_K = 12
+PER_DOCUMENT_DIRECT_TOP_K = 4
+PER_DOCUMENT_CONTEXT_LIMIT = 12
 
 NEIGHBOR_WINDOW = 2
-MAX_CONTEXT_CHUNKS = 22
+MAX_CONTEXT_CHUNKS_TOTAL = 32
+
+EMBEDDING_BATCH_SIZE = 16
 
 
 class RetrieveRequest(BaseModel):
@@ -63,6 +69,36 @@ def ensure_folders():
     os.makedirs(KNOWLEDGE_BASE_FOLDER, exist_ok=True)
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     os.makedirs("logs", exist_ok=True)
+
+
+def ensure_schema_updates():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        ALTER TABLE documents
+        ADD COLUMN IF NOT EXISTS indexing_status TEXT DEFAULT 'ready';
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE documents
+        ADD COLUMN IF NOT EXISTS error_message TEXT;
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE documents
+        ADD COLUMN IF NOT EXISTS chunk_count INTEGER DEFAULT 0;
+        """
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 
 def calculate_file_hash(file_path):
@@ -219,7 +255,6 @@ def is_supported_file(file_path):
     extension = file_path.lower().split(".")[-1]
     return extension in supported_extensions
 
-
 def recursive_split(text, separators):
     if len(text) <= MAX_CHUNK_SIZE:
         return [text]
@@ -318,8 +353,6 @@ def split_text_into_chunks(text):
 
 
 def generate_embedding(text):
-    print("Generating embedding | length:", len(text))
-
     response = requests.post(
         "http://localhost:11434/api/embeddings",
         json={
@@ -337,25 +370,92 @@ def generate_embedding(text):
     return response.json()["embedding"]
 
 
-def index_file(file_path, source_type, force_reindex=False):
+def generate_embeddings_batch(texts):
+    if not texts:
+        return []
+
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/embed",
+            json={
+                "model": EMBEDDING_MODEL,
+                "input": texts
+            },
+            timeout=300
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+
+            if "embeddings" in data:
+                return data["embeddings"]
+
+    except Exception as error:
+        print("Batch embedding failed, falling back to single embeddings.")
+        print(error)
+
+    embeddings = []
+
+    for text in texts:
+        embeddings.append(generate_embedding(text))
+
+    return embeddings
+
+
+def update_document_status(document_id, status, error_message=None, chunk_count=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if chunk_count is None:
+        cursor.execute(
+            """
+            UPDATE documents
+            SET indexing_status = %s,
+                error_message = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE document_id = %s
+            """,
+            (
+                status,
+                error_message,
+                document_id
+            )
+        )
+    else:
+        cursor.execute(
+            """
+            UPDATE documents
+            SET indexing_status = %s,
+                error_message = %s,
+                chunk_count = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE document_id = %s
+            """,
+            (
+                status,
+                error_message,
+                chunk_count,
+                document_id
+            )
+        )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def queue_file_for_indexing(file_path, source_type, force_reindex=False):
     absolute_path = os.path.abspath(file_path)
     original_filename = os.path.basename(file_path)
     metadata = get_file_metadata(file_path)
-
-    print("\n" + "=" * 80)
-    print("INDEXING FILE")
-    print("=" * 80)
-    print("Filename:", original_filename)
-    print("Path:", absolute_path)
-    print("Source:", source_type)
-    print("Force reindex:", force_reindex)
+    file_hash = calculate_file_hash(file_path)
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        SELECT document_id, file_hash, file_size, last_modified, version
+        SELECT document_id, file_hash, file_size, last_modified, version, indexing_status
         FROM documents
         WHERE file_path = %s
         """,
@@ -365,87 +465,42 @@ def index_file(file_path, source_type, force_reindex=False):
     existing_by_path = cursor.fetchone()
 
     if existing_by_path:
-        document_id, old_hash, old_size, old_modified, old_version = existing_by_path
+        document_id, old_hash, old_size, old_modified, old_version, old_status = existing_by_path
 
-        if not force_reindex:
-            if old_size == metadata["file_size"] and old_modified == metadata["last_modified"]:
-                cursor.close()
-                conn.close()
-
-                print("Status: unchanged file path. Skipped.")
-
-                return {
-                    "filename": original_filename,
-                    "status": "skipped_unchanged",
-                    "message": "File already indexed and unchanged."
-                }
-
-        new_hash = calculate_file_hash(file_path)
-
-        if not force_reindex:
-            if new_hash == old_hash:
-                cursor.execute(
-                    """
-                    UPDATE documents
-                    SET file_size = %s,
-                        last_modified = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE document_id = %s
-                    """,
-                    (
-                        metadata["file_size"],
-                        metadata["last_modified"],
-                        document_id
-                    )
-                )
-
-                conn.commit()
-                cursor.close()
-                conn.close()
-
-                print("Status: metadata changed but content same. Skipped re-index.")
-
-                return {
-                    "filename": original_filename,
-                    "status": "skipped_same_hash",
-                    "message": "Metadata changed but content is same."
-                }
-
-        print("Status: re-indexing existing document.")
-        print("Deleting old chunks for document_id:", document_id)
-
-        cursor.execute(
-            """
-            DELETE FROM document_chunks
-            WHERE document_id = %s
-            """,
-            (document_id,)
+        unchanged = (
+            old_hash == file_hash
+            and old_size == metadata["file_size"]
+            and old_modified == metadata["last_modified"]
         )
 
-        extracted_text = extract_text(file_path)
-        chunks = split_text_into_chunks(extracted_text)
+        if unchanged and old_status == "ready" and not force_reindex:
+            cursor.close()
+            conn.close()
 
-        print("Characters extracted:", len(extracted_text))
-        print("New chunks created:", len(chunks))
+            return {
+                "filename": original_filename,
+                "document_id": document_id,
+                "status": "skipped_unchanged",
+                "message": "File already indexed and unchanged.",
+                "scheduled": False
+            }
 
-        for index, chunk in enumerate(chunks, start=1):
-            print(f"Embedding updated chunk {index}/{len(chunks)}")
-            embedding = generate_embedding(chunk)
+        if old_status in ["pending", "indexing"] and not force_reindex:
+            cursor.close()
+            conn.close()
 
-            cursor.execute(
-                """
-                INSERT INTO document_chunks
-                (document_id, chunk_number, content, embedding, token_count)
-                VALUES (%s, %s, %s, %s::vector, %s)
-                """,
-                (
-                    document_id,
-                    index,
-                    chunk,
-                    str(embedding),
-                    len(tokenize(chunk))
-                )
-            )
+            return {
+                "filename": original_filename,
+                "document_id": document_id,
+                "status": "already_processing",
+                "message": "File is already being indexed.",
+                "scheduled": False
+            }
+
+        new_version = old_version
+
+        if old_hash != file_hash or force_reindex:
+            new_version = old_version + 1
 
         cursor.execute(
             """
@@ -454,14 +509,18 @@ def index_file(file_path, source_type, force_reindex=False):
                 file_size = %s,
                 last_modified = %s,
                 version = %s,
+                source_type = %s,
+                indexing_status = 'pending',
+                error_message = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE document_id = %s
             """,
             (
-                new_hash,
+                file_hash,
                 metadata["file_size"],
                 metadata["last_modified"],
-                old_version + 1,
+                new_version,
+                source_type,
                 document_id
             )
         )
@@ -470,16 +529,13 @@ def index_file(file_path, source_type, force_reindex=False):
         cursor.close()
         conn.close()
 
-        print("Status: existing document re-indexed.")
-
         return {
             "filename": original_filename,
-            "status": "reindexed",
-            "chunks": len(chunks),
-            "version": old_version + 1
+            "document_id": document_id,
+            "status": "queued_for_reindexing",
+            "message": "File queued for background indexing.",
+            "scheduled": True
         }
-
-    file_hash = calculate_file_hash(file_path)
 
     cursor.execute(
         """
@@ -496,26 +552,29 @@ def index_file(file_path, source_type, force_reindex=False):
         cursor.close()
         conn.close()
 
-        print("Status: duplicate content found. Skipped chunks and embeddings.")
-
         return {
             "filename": original_filename,
+            "document_id": existing_by_hash[0],
             "status": "skipped_duplicate",
-            "message": "Same content already indexed."
+            "message": "Same content already indexed.",
+            "scheduled": False
         }
-
-    extracted_text = extract_text(file_path)
-    chunks = split_text_into_chunks(extracted_text)
-
-    print("Status: new document.")
-    print("Characters extracted:", len(extracted_text))
-    print("Chunks created:", len(chunks))
 
     cursor.execute(
         """
         INSERT INTO documents
-        (original_filename, file_path, file_hash, file_size, last_modified, source_type)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        (
+            original_filename,
+            file_path,
+            file_hash,
+            file_size,
+            last_modified,
+            source_type,
+            indexing_status,
+            error_message,
+            chunk_count
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL, 0)
         RETURNING document_id
         """,
         (
@@ -530,46 +589,113 @@ def index_file(file_path, source_type, force_reindex=False):
 
     document_id = cursor.fetchone()[0]
 
-    for index, chunk in enumerate(chunks, start=1):
-        print(f"Embedding chunk {index}/{len(chunks)}")
-        embedding = generate_embedding(chunk)
-
-        cursor.execute(
-            """
-            INSERT INTO document_chunks
-            (document_id, chunk_number, content, embedding, token_count)
-            VALUES (%s, %s, %s, %s::vector, %s)
-            """,
-            (
-                document_id,
-                index,
-                chunk,
-                str(embedding),
-                len(tokenize(chunk))
-            )
-        )
-
     conn.commit()
     cursor.close()
     conn.close()
 
-    print("Status: new document indexed successfully.")
-
     return {
         "filename": original_filename,
-        "status": "indexed_new",
         "document_id": document_id,
-        "chunks": len(chunks)
+        "status": "queued_new_document",
+        "message": "File queued for background indexing.",
+        "scheduled": True
     }
 
 
-def scan_knowledge_base(force_reindex=False):
+def process_document_indexing(document_id, file_path):
+    print("\n" + "=" * 80)
+    print("BACKGROUND INDEXING STARTED")
+    print("=" * 80)
+    print("Document ID:", document_id)
+    print("File:", file_path)
+
+    try:
+        update_document_status(document_id, "indexing", None, 0)
+
+        extracted_text = extract_text(file_path)
+        chunks = split_text_into_chunks(extracted_text)
+
+        print("Characters extracted:", len(extracted_text))
+        print("Chunks created:", len(chunks))
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM document_chunks
+            WHERE document_id = %s
+            """,
+            (document_id,)
+        )
+
+        inserted_count = 0
+
+        for batch_start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+            batch_chunks = chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+
+            print(
+                f"Embedding batch {batch_start + 1} to "
+                f"{batch_start + len(batch_chunks)} of {len(chunks)}"
+            )
+
+            embeddings = generate_embeddings_batch(batch_chunks)
+
+            rows = []
+
+            for index, chunk in enumerate(batch_chunks):
+                chunk_number = batch_start + index + 1
+                embedding = embeddings[index]
+
+                rows.append(
+                    (
+                        document_id,
+                        chunk_number,
+                        chunk,
+                        str(embedding),
+                        len(tokenize(chunk))
+                    )
+                )
+
+            execute_values(
+                cursor,
+                """
+                INSERT INTO document_chunks
+                (document_id, chunk_number, content, embedding, token_count)
+                VALUES %s
+                """,
+                rows,
+                template="(%s, %s, %s, %s::vector, %s)"
+            )
+
+            conn.commit()
+            inserted_count += len(rows)
+
+        cursor.close()
+        conn.close()
+
+        update_document_status(document_id, "ready", None, inserted_count)
+
+        print("BACKGROUND INDEXING COMPLETED")
+        print("Document ID:", document_id)
+        print("Chunks inserted:", inserted_count)
+
+    except Exception as error:
+        error_text = str(error)
+
+        print("BACKGROUND INDEXING FAILED")
+        print("Document ID:", document_id)
+        print(error_text)
+
+        update_document_status(document_id, "failed", error_text, 0)
+
+
+def scan_knowledge_base(background_tasks, force_reindex=False):
     ensure_folders()
 
     print("\n" + "=" * 80)
     print("SCANNING KNOWLEDGE BASE")
     print("=" * 80)
-    print("Force reindex:", force_reindex)
 
     results = []
 
@@ -577,16 +703,52 @@ def scan_knowledge_base(force_reindex=False):
         for filename in files:
             file_path = os.path.join(root, filename)
 
-            if is_supported_file(file_path):
-                result = index_file(file_path, "knowledge_base", force_reindex)
-                results.append(result)
-            else:
-                results.append({
-                    "filename": filename,
-                    "status": "unsupported"
-                })
+            if not is_supported_file(file_path):
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "unsupported"
+                    }
+                )
+                continue
+
+            result = queue_file_for_indexing(
+                file_path=file_path,
+                source_type="knowledge_base",
+                force_reindex=force_reindex
+            )
+
+            results.append(result)
+
+            if result.get("scheduled"):
+                background_tasks.add_task(
+                    process_document_indexing,
+                    result["document_id"],
+                    os.path.abspath(file_path)
+                )
 
     return results
+
+
+def get_ready_document_ids():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT document_id
+        FROM documents
+        WHERE indexing_status = 'ready'
+        ORDER BY updated_at DESC
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return [row[0] for row in rows]
 
 
 def build_document_filter(document_ids):
@@ -597,7 +759,7 @@ def build_document_filter(document_ids):
     return f" AND c.document_id IN ({placeholders}) ", document_ids
 
 
-def get_vector_rows(cursor, question, document_ids=None):
+def get_vector_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_VECTOR_TOP_K):
     question_embedding = generate_embedding(question)
     document_ids = document_ids or []
 
@@ -614,20 +776,24 @@ def get_vector_rows(cursor, question, document_ids=None):
         FROM document_chunks c
         JOIN documents d
         ON c.document_id = d.document_id
-        WHERE 1=1
+        WHERE d.indexing_status = 'ready'
         {filter_sql}
         ORDER BY c.embedding <=> %s::vector
         LIMIT %s
     """
 
-    params = [str(question_embedding)] + filter_params + [str(question_embedding), VECTOR_TOP_K]
+    params = (
+        [str(question_embedding)]
+        + filter_params
+        + [str(question_embedding), limit]
+    )
 
     cursor.execute(query, params)
 
     return cursor.fetchall()
 
 
-def get_keyword_rows(cursor, question, document_ids=None):
+def get_keyword_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_KEYWORD_TOP_K):
     keywords = tokenize(question)
     document_ids = document_ids or []
 
@@ -654,12 +820,17 @@ def get_keyword_rows(cursor, question, document_ids=None):
         FROM document_chunks c
         JOIN documents d
         ON c.document_id = d.document_id
-        WHERE ({" OR ".join(keyword_conditions)})
+        WHERE d.indexing_status = 'ready'
+        AND ({" OR ".join(keyword_conditions)})
         {document_filter_sql}
         LIMIT %s
     """
 
-    params = params + document_filter_params + [KEYWORD_TOP_K]
+    params = (
+        params
+        + document_filter_params
+        + [limit]
+    )
 
     cursor.execute(query, params)
 
@@ -764,6 +935,7 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
             ON c.document_id = d.document_id
             WHERE c.document_id = %s
               AND c.chunk_number BETWEEN %s AND %s
+              AND d.indexing_status = 'ready'
             ORDER BY c.chunk_number ASC
             """,
             (
@@ -797,8 +969,8 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
     return list(neighbor_map.values())
 
 
-def build_context_chunks(cursor, ranked_chunks):
-    direct_chunks = ranked_chunks[:FINAL_TOP_K]
+def build_context_chunks_for_document(cursor, ranked_chunks, dynamic_limit):
+    direct_chunks = ranked_chunks[:PER_DOCUMENT_DIRECT_TOP_K]
     neighbor_chunks = fetch_neighbor_chunks(cursor, direct_chunks)
 
     combined = {}
@@ -809,40 +981,82 @@ def build_context_chunks(cursor, ranked_chunks):
     combined_chunks = list(combined.values())
 
     combined_chunks.sort(
-        key=lambda item: (
-            item["document_id"],
-            item["chunk_number"]
-        )
+        key=lambda item: item["chunk_number"]
     )
 
-    return combined_chunks[:MAX_CONTEXT_CHUNKS]
+    return combined_chunks[:dynamic_limit]
 
 
 def retrieve_relevant_chunks(question, document_ids=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    document_ids = document_ids or []
+    requested_document_ids = document_ids or []
+
+    if requested_document_ids:
+        target_document_ids = requested_document_ids
+    else:
+        target_document_ids = get_ready_document_ids()
+
+    if not target_document_ids:
+        cursor.close()
+        conn.close()
+        return []
 
     print("\n" + "=" * 80)
-    print("RETRIEVAL STARTED")
+    print("BALANCED MULTI-DOCUMENT RETRIEVAL STARTED")
     print("=" * 80)
     print("Question:", question)
-    print("Document filter:", document_ids if document_ids else "ALL DOCUMENTS")
+    print("Documents:", target_document_ids)
 
-    vector_rows = get_vector_rows(cursor, question, document_ids)
-    keyword_rows = get_keyword_rows(cursor, question, document_ids)
+    per_document_limit = max(
+        3,
+        min(
+            PER_DOCUMENT_CONTEXT_LIMIT,
+            MAX_CONTEXT_CHUNKS_TOTAL // max(1, len(target_document_ids))
+        )
+    )
 
-    merged_chunks = merge_retrieval_results(vector_rows, keyword_rows)
-    ranked_chunks = rerank_chunks(merged_chunks, question)
+    final_chunks = []
 
-    final_chunks = build_context_chunks(cursor, ranked_chunks)
+    for document_id in target_document_ids:
+        print("\nRetrieving for document:", document_id)
+
+        vector_rows = get_vector_rows(
+            cursor,
+            question,
+            [document_id],
+            PER_DOCUMENT_VECTOR_TOP_K
+        )
+
+        keyword_rows = get_keyword_rows(
+            cursor,
+            question,
+            [document_id],
+            PER_DOCUMENT_KEYWORD_TOP_K
+        )
+
+        merged_chunks = merge_retrieval_results(vector_rows, keyword_rows)
+        ranked_chunks = rerank_chunks(merged_chunks, question)
+
+        if not ranked_chunks:
+            continue
+
+        document_context_chunks = build_context_chunks_for_document(
+            cursor,
+            ranked_chunks,
+            per_document_limit
+        )
+
+        final_chunks.extend(document_context_chunks)
 
     cursor.close()
     conn.close()
 
+    final_chunks = final_chunks[:MAX_CONTEXT_CHUNKS_TOTAL]
+
     print("\n" + "=" * 80)
-    print("FINAL CONTEXT CHUNKS")
+    print("FINAL BALANCED CONTEXT CHUNKS")
     print("=" * 80)
 
     for index, chunk in enumerate(final_chunks, start=1):
@@ -923,7 +1137,7 @@ def generate_answer(question, chunks):
     context = "\n\n-------------------------\n\n".join(context_parts)
 
     system_prompt = """
-You are a strict knowledge-base assistant.
+You are a strict enterprise knowledge-base assistant.
 
 Use only the given knowledge base content.
 
@@ -932,9 +1146,12 @@ Rules:
 - Do not use outside knowledge.
 - Do not guess missing facts.
 - Do not invent names, numbers, dates, policies, rules, or facts.
+- If multiple documents are provided, consider all documents.
+- Do not ignore a document unless no relevant content from that document is present.
+- If different documents provide different information, mention it document-wise.
 - If multiple related points are present, include all relevant points.
 - If the exact answer is spread across multiple chunks, combine them into one complete answer.
-- If the question is vague, summarize the most relevant information from the retrieved content.
+- If the question is vague, summarize the most relevant information from all provided documents.
 - If the user asks "this pdf" or "this document", answer only from the selected document content that was provided.
 - Keep the answer clear, professional, and structured.
 - Do not say "based on context" or "retrieved chunks".
@@ -979,6 +1196,8 @@ Give the final answer only.
 @app.on_event("startup")
 def startup_event():
     ensure_folders()
+    ensure_schema_updates()
+
     print("\nKB Chatbot backend started.")
     print("Knowledge base folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
     print("Uploads folder:", os.path.abspath(UPLOAD_FOLDER))
@@ -1029,18 +1248,18 @@ def db_check():
 
 
 @app.post("/index-knowledge-base")
-def index_knowledge_base(force: bool = False):
-    results = scan_knowledge_base(force)
+def index_knowledge_base(background_tasks: BackgroundTasks, force: bool = False):
+    results = scan_knowledge_base(background_tasks, force)
 
     return {
-        "message": "Knowledge base indexing completed.",
+        "message": "Knowledge base files queued for background indexing.",
         "force_reindex": force,
         "results": results
     }
 
 
 @app.post("/upload")
-async def upload_documents(request: Request):
+async def upload_documents(request: Request, background_tasks: BackgroundTasks):
     ensure_folders()
 
     form = await request.form()
@@ -1062,17 +1281,31 @@ async def upload_documents(request: Request):
             shutil.copyfileobj(file.file, buffer)
 
         if not is_supported_file(save_path):
-            results.append({
-                "filename": safe_filename,
-                "status": "unsupported"
-            })
+            results.append(
+                {
+                    "filename": safe_filename,
+                    "status": "unsupported"
+                }
+            )
             continue
 
-        result = index_file(save_path, "user_upload", False)
+        result = queue_file_for_indexing(
+            file_path=save_path,
+            source_type="user_upload",
+            force_reindex=False
+        )
+
         results.append(result)
 
+        if result.get("scheduled"):
+            background_tasks.add_task(
+                process_document_indexing,
+                result["document_id"],
+                os.path.abspath(save_path)
+            )
+
     return {
-        "message": "Upload processing completed.",
+        "message": "Upload completed. Indexing is running in background.",
         "results": results
     }
 
@@ -1089,7 +1322,9 @@ def list_documents():
             d.original_filename,
             d.source_type,
             d.version,
-            COUNT(c.chunk_id) AS chunks,
+            d.indexing_status,
+            d.error_message,
+            COALESCE(d.chunk_count, COUNT(c.chunk_id)) AS chunks,
             d.indexed_at,
             d.updated_at
         FROM documents d
@@ -1112,9 +1347,11 @@ def list_documents():
                 "filename": row[1],
                 "source_type": row[2],
                 "version": row[3],
-                "chunks": row[4],
-                "indexed_at": str(row[5]),
-                "updated_at": str(row[6])
+                "indexing_status": row[4],
+                "error_message": row[5],
+                "chunks": row[6],
+                "indexed_at": str(row[7]),
+                "updated_at": str(row[8])
             }
             for row in rows
         ]
@@ -1131,7 +1368,7 @@ def retrieve(request: RetrieveRequest):
     return {
         "question": request.question,
         "document_ids": request.document_ids,
-        "search_scope": "selected_documents" if request.document_ids else "all_documents",
+        "search_scope": "selected_documents" if request.document_ids else "all_ready_documents",
         "chunks": [
             {
                 "rank": index + 1,
@@ -1165,7 +1402,7 @@ def chat(request: ChatRequest):
     )
 
     if not chunks:
-        answer = "No relevant knowledge base content was found for the selected document scope."
+        answer = "No ready and relevant knowledge base content was found for the selected document scope."
         save_message(session_id, "assistant", answer)
 
         return {
@@ -1181,7 +1418,7 @@ def chat(request: ChatRequest):
     return {
         "session_id": session_id,
         "answer": answer,
-        "search_scope": "selected_documents" if request.document_ids else "all_documents",
+        "search_scope": "selected_documents" if request.document_ids else "all_ready_documents",
         "document_ids": request.document_ids,
         "sources": [
             {
