@@ -1,13 +1,412 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <title>KB Chatbot</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background: #0f172a;
+            color: white;
+            height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 320px;
+            background: #111827;
+            padding: 18px;
+            border-right: 1px solid #334155;
+            overflow-y: auto;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        h2, h3 {
+            margin-top: 0;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .doc-item, .session-item {
+            background: #1e293b;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .chat-box {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .message {
+            max-width: 75%;
+            padding: 14px;
+            border-radius: 12px;
+            margin-bottom: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .user {
+            background: #2563eb;
+            margin-left: auto;
+        }
+
+        .assistant {
+            background: #1e293b;
+            margin-right: auto;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 10px;
+            padding: 16px;
+            border-top: 1px solid #334155;
+            background: #111827;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 14px;
+            border-radius: 10px;
+            border: none;
+            outline: none;
+        }
+
+        .status {
+            font-size: 13px;
+            color: #93c5fd;
+            margin-top: 8px;
+        }
+
+        .sources {
+            font-size: 12px;
+            margin-top: 10px;
+            color: #cbd5e1;
+            border-top: 1px solid #475569;
+            padding-top: 8px;
+        }
+
+        .small-btn {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        hr {
+            border: 0;
+            border-top: 1px solid #334155;
+            margin: 18px 0;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>Knowledge Base Chatbot</h1>
-    <p>Frontend loaded successfully.</p>
-</body>
 
+    <div class="sidebar">
+        <h2>KB Chatbot</h2>
+
+        <button class="small-btn" onclick="newChat()">+ New Chat</button>
+
+        <hr>
+
+        <h3>Upload Documents</h3>
+        <input type="file" id="fileInput" multiple>
+        <button class="small-btn" onclick="uploadFiles()">Upload</button>
+        <div id="uploadStatus" class="status"></div>
+
+        <hr>
+
+        <h3>Documents</h3>
+        <button class="small-btn" onclick="loadDocuments()">Refresh Documents</button>
+
+        <label>
+            <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
+            Search all documents
+        </label>
+
+        <div id="documentsList"></div>
+
+        <hr>
+
+        <h3>Chat History</h3>
+        <button class="small-btn" onclick="loadSessions()">Refresh History</button>
+        <div id="sessionsList"></div>
+    </div>
+
+    <div class="main">
+        <div class="chat-box" id="chatBox">
+            <div class="message assistant">
+                Hi! Upload or select documents, then ask me anything from the knowledge base.
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="questionInput" placeholder="Ask a question..." onkeydown="handleEnter(event)">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        let documents = [];
+
+        async function loadDocuments() {
+            const response = await fetch("/documents");
+            const data = await response.json();
+
+            documents = data.documents || [];
+
+            const list = document.getElementById("documentsList");
+            list.innerHTML = "";
+
+            if (documents.length === 0) {
+                list.innerHTML = "<p class='status'>No documents indexed yet.</p>";
+                return;
+            }
+
+            documents.forEach(doc => {
+                const div = document.createElement("div");
+                div.className = "doc-item";
+
+                div.innerHTML = `
+                    <label>
+                        <input type="checkbox" class="doc-check" value="${doc.document_id}">
+                        ${doc.filename}
+                    </label>
+                    <br>
+                    <small>
+                        ID: ${doc.document_id} | ${doc.source_type} | Chunks: ${doc.chunks}
+                    </small>
+                `;
+
+                list.appendChild(div);
+            });
+        }
+
+        function toggleAllDocuments() {
+            const selectAll = document.getElementById("selectAllDocs").checked;
+            const checks = document.querySelectorAll(".doc-check");
+
+            checks.forEach(check => {
+                check.checked = false;
+                check.disabled = selectAll;
+            });
+        }
+
+        function getSelectedDocumentIds() {
+            const selectAll = document.getElementById("selectAllDocs").checked;
+
+            if (selectAll) {
+                return [];
+            }
+
+            const selected = [];
+            document.querySelectorAll(".doc-check:checked").forEach(check => {
+                selected.push(parseInt(check.value));
+            });
+
+            return selected;
+        }
+
+        async function uploadFiles() {
+            const input = document.getElementById("fileInput");
+            const status = document.getElementById("uploadStatus");
+
+            if (input.files.length === 0) {
+                status.innerText = "Please select files first.";
+                return;
+            }
+
+            const formData = new FormData();
+
+            for (let file of input.files) {
+                formData.append("files", file);
+            }
+
+            status.innerText = "Uploading and indexing files...";
+
+            try {
+                const response = await fetch("/upload", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                status.innerText = "Upload completed.";
+                console.log(data);
+
+                await loadDocuments();
+
+            } catch (error) {
+                status.innerText = "Upload failed.";
+                console.error(error);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById("questionInput");
+            const question = input.value.trim();
+
+            if (!question) return;
+
+            addMessage("user", question);
+            input.value = "";
+
+            const selectedDocumentIds = getSelectedDocumentIds();
+
+            addMessage("assistant", "Thinking...");
+
+            const payload = {
+                question: question,
+                session_id: currentSessionId,
+                document_ids: selectedDocumentIds
+            };
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                currentSessionId = data.session_id;
+
+                removeLastAssistantThinking();
+
+                let answerHtml = data.answer;
+
+                if (data.sources && data.sources.length > 0) {
+                    answerHtml += "\n\nSources:\n";
+
+                    data.sources.forEach(source => {
+                        answerHtml += `• ${source.filename} | Document ID: ${source.document_id} | Chunk: ${source.chunk_number}\n`;
+                    });
+                }
+
+                addMessage("assistant", answerHtml);
+
+                await loadSessions();
+
+            } catch (error) {
+                removeLastAssistantThinking();
+                addMessage("assistant", "Something went wrong while generating the answer.");
+                console.error(error);
+            }
+        }
+
+        function addMessage(role, text) {
+            const chatBox = document.getElementById("chatBox");
+
+            const div = document.createElement("div");
+            div.className = "message " + role;
+            div.innerText = text;
+
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function removeLastAssistantThinking() {
+            const messages = document.querySelectorAll(".message.assistant");
+
+            if (messages.length === 0) return;
+
+            const last = messages[messages.length - 1];
+
+            if (last.innerText === "Thinking...") {
+                last.remove();
+            }
+        }
+
+        function handleEnter(event) {
+            if (event.key === "Enter") {
+                sendMessage();
+            }
+        }
+
+        async function newChat() {
+            currentSessionId = null;
+
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = "";
+
+            addMessage("assistant", "New chat started. Select documents and ask your question.");
+        }
+
+        async function loadSessions() {
+            const response = await fetch("/sessions");
+            const data = await response.json();
+
+            const list = document.getElementById("sessionsList");
+            list.innerHTML = "";
+
+            if (!data.sessions || data.sessions.length === 0) {
+                list.innerHTML = "<p class='status'>No chat history yet.</p>";
+                return;
+            }
+
+            data.sessions.forEach(session => {
+                const div = document.createElement("div");
+                div.className = "session-item";
+                div.innerText = session.title;
+                div.onclick = () => loadSessionMessages(session.session_id);
+                list.appendChild(div);
+            });
+        }
+
+        async function loadSessionMessages(sessionId) {
+            currentSessionId = sessionId;
+
+            const response = await fetch(`/sessions/${sessionId}/messages`);
+            const data = await response.json();
+
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = "";
+
+            data.messages.forEach(msg => {
+                addMessage(msg.role === "user" ? "user" : "assistant", msg.message);
+            });
+        }
+
+        window.onload = async function () {
+            await loadDocuments();
+            await loadSessions();
+        };
+    </script>
+
+</body>
 </html>
