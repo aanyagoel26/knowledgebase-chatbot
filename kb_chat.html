@@ -1,7 +1,10 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>KB Chatbot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <style>
         * {
             box-sizing: border-box;
@@ -17,7 +20,7 @@
         }
 
         .sidebar {
-            width: 320px;
+            width: 340px;
             background: #111827;
             padding: 18px;
             border-right: 1px solid #334155;
@@ -31,7 +34,27 @@
             height: 100vh;
         }
 
-        h2, h3 {
+        .topbar {
+            padding: 16px 24px;
+            background: #111827;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .topbar-title {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .topbar-status {
+            font-size: 13px;
+            color: #93c5fd;
+        }
+
+        h2,
+        h3 {
             margin-top: 0;
         }
 
@@ -49,17 +72,79 @@
             background: #1d4ed8;
         }
 
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
         input[type="file"] {
             width: 100%;
             margin-top: 8px;
+            color: #cbd5e1;
         }
 
-        .doc-item, .session-item {
+        .small-btn {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .doc-item,
+        .session-item {
             background: #1e293b;
             padding: 10px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 8px;
             font-size: 14px;
+            border: 1px solid #334155;
+        }
+
+        .session-item {
+            cursor: pointer;
+        }
+
+        .session-item:hover {
+            background: #334155;
+        }
+
+        .doc-name {
+            font-weight: bold;
+            word-break: break-word;
+        }
+
+        .doc-meta {
+            font-size: 12px;
+            color: #cbd5e1;
+            margin-top: 5px;
+            line-height: 1.5;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            margin-top: 6px;
+            font-weight: bold;
+        }
+
+        .ready {
+            background: #14532d;
+            color: #86efac;
+        }
+
+        .indexing {
+            background: #713f12;
+            color: #fde68a;
+        }
+
+        .pending {
+            background: #1e3a8a;
+            color: #bfdbfe;
+        }
+
+        .failed {
+            background: #7f1d1d;
+            color: #fecaca;
         }
 
         .chat-box {
@@ -69,12 +154,13 @@
         }
 
         .message {
-            max-width: 75%;
+            max-width: 78%;
             padding: 14px;
-            border-radius: 12px;
+            border-radius: 14px;
             margin-bottom: 14px;
-            line-height: 1.5;
+            line-height: 1.55;
             white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         .user {
@@ -85,6 +171,7 @@
         .assistant {
             background: #1e293b;
             margin-right: auto;
+            border: 1px solid #334155;
         }
 
         .input-area {
@@ -101,31 +188,112 @@
             border-radius: 10px;
             border: none;
             outline: none;
+            background: #f8fafc;
+            color: #0f172a;
         }
 
         .status {
             font-size: 13px;
             color: #93c5fd;
             margin-top: 8px;
+            line-height: 1.4;
         }
 
-        .sources {
+        .error-text {
+            color: #fca5a5;
             font-size: 12px;
-            margin-top: 10px;
-            color: #cbd5e1;
-            border-top: 1px solid #475569;
-            padding-top: 8px;
+            margin-top: 6px;
         }
 
-        .small-btn {
-            width: 100%;
+        .warning {
+            background: #713f12;
+            color: #fde68a;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
             margin-bottom: 10px;
+        }
+
+        .success {
+            background: #14532d;
+            color: #bbf7d0;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .sources-box {
+            margin-top: 12px;
+            border-top: 1px solid #475569;
+            padding-top: 10px;
+            font-size: 12px;
+            color: #cbd5e1;
+        }
+
+        .source-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 8px;
+            border-radius: 8px;
+            margin-top: 6px;
         }
 
         hr {
             border: 0;
             border-top: 1px solid #334155;
             margin: 18px 0;
+        }
+
+        .search-all-box {
+            background: #1e293b;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid #334155;
+        }
+
+        .empty-state {
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .typing {
+            opacity: 0.8;
+            font-style: italic;
+        }
+
+        .copy-btn {
+            background: #334155;
+            font-size: 12px;
+            padding: 6px 10px;
+            margin-top: 8px;
+        }
+
+        .copy-btn:hover {
+            background: #475569;
+        }
+
+        @media (max-width: 900px) {
+            body {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: 42vh;
+                border-right: none;
+                border-bottom: 1px solid #334155;
+            }
+
+            .main {
+                height: 58vh;
+            }
+
+            .message {
+                max-width: 90%;
+            }
         }
     </style>
 </head>
@@ -140,7 +308,7 @@
         <hr>
 
         <h3>Upload Documents</h3>
-        <input type="file" id="fileInput" multiple>
+        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
         <button class="small-btn" onclick="uploadFiles()">Upload</button>
         <div id="uploadStatus" class="status"></div>
 
@@ -149,10 +317,12 @@
         <h3>Documents</h3>
         <button class="small-btn" onclick="loadDocuments()">Refresh Documents</button>
 
-        <label>
-            <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
-            Search all documents
-        </label>
+        <div class="search-all-box">
+            <label>
+                <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
+                Search all ready documents
+            </label>
+        </div>
 
         <div id="documentsList"></div>
 
@@ -164,53 +334,136 @@
     </div>
 
     <div class="main">
+        <div class="topbar">
+            <div class="topbar-title">Enterprise Knowledge Assistant</div>
+            <div class="topbar-status" id="systemStatus">Connected</div>
+        </div>
+
         <div class="chat-box" id="chatBox">
             <div class="message assistant">
-                Hi! Upload or select documents, then ask me anything from the knowledge base.
+                Hi! Upload or select ready documents, then ask me anything from the knowledge base.
             </div>
         </div>
 
         <div class="input-area">
             <input type="text" id="questionInput" placeholder="Ask a question..." onkeydown="handleEnter(event)">
-            <button onclick="sendMessage()">Send</button>
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
         </div>
     </div>
 
     <script>
         let currentSessionId = null;
         let documents = [];
+        let autoRefreshTimer = null;
+
+        function getStatusIcon(status) {
+            if (status === "ready") return "🟢";
+            if (status === "indexing") return "🟡";
+            if (status === "pending") return "🔵";
+            if (status === "failed") return "🔴";
+            return "⚪";
+        }
+
+        function getStatusClass(status) {
+            if (status === "ready") return "ready";
+            if (status === "indexing") return "indexing";
+            if (status === "pending") return "pending";
+            if (status === "failed") return "failed";
+            return "pending";
+        }
+
+        function isReady(doc) {
+            return (doc.indexing_status || "ready") === "ready";
+        }
+
+        function hasProcessingDocuments() {
+            return documents.some(doc => {
+                const status = doc.indexing_status || "ready";
+                return status === "pending" || status === "indexing";
+            });
+        }
 
         async function loadDocuments() {
-            const response = await fetch("/documents");
-            const data = await response.json();
+            try {
+                const response = await fetch("/documents");
+                const data = await response.json();
 
-            documents = data.documents || [];
+                documents = data.documents || [];
 
-            const list = document.getElementById("documentsList");
-            list.innerHTML = "";
+                const list = document.getElementById("documentsList");
+                list.innerHTML = "";
 
-            if (documents.length === 0) {
-                list.innerHTML = "<p class='status'>No documents indexed yet.</p>";
-                return;
+                if (documents.length === 0) {
+                    list.innerHTML = "<p class='empty-state'>No documents indexed yet.</p>";
+                    stopAutoRefresh();
+                    return;
+                }
+
+                documents.forEach(doc => {
+                    const status = doc.indexing_status || "ready";
+                    const statusIcon = getStatusIcon(status);
+                    const statusClass = getStatusClass(status);
+                    const disabled = isReady(doc) ? "" : "disabled";
+
+                    const div = document.createElement("div");
+                    div.className = "doc-item";
+
+                    div.innerHTML = `
+                        <label>
+                            <input type="checkbox" class="doc-check" value="${doc.document_id}" ${disabled}>
+                            <span class="doc-name">${statusIcon} ${doc.filename}</span>
+                        </label>
+
+                        <div class="doc-meta">
+                            ID: ${doc.document_id}<br>
+                            Source: ${doc.source_type}<br>
+                            Version: ${doc.version}<br>
+                            Chunks: ${doc.chunks}
+                        </div>
+
+                        <span class="status-pill ${statusClass}">
+                            ${status.toUpperCase()}
+                        </span>
+
+                        ${doc.error_message
+                            ? `<div class="error-text">Error: ${doc.error_message}</div>`
+                            : ""
+                        }
+                    `;
+
+                    list.appendChild(div);
+                });
+
+                toggleAllDocuments();
+
+                if (hasProcessingDocuments()) {
+                    startAutoRefresh();
+                    document.getElementById("systemStatus").innerText = "Indexing in background...";
+                } else {
+                    stopAutoRefresh();
+                    document.getElementById("systemStatus").innerText = "Connected";
+                }
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById("documentsList").innerHTML =
+                    "<p class='error-text'>Failed to load documents.</p>";
             }
+        }
 
-            documents.forEach(doc => {
-                const div = document.createElement("div");
-                div.className = "doc-item";
+        function startAutoRefresh() {
+            if (autoRefreshTimer) return;
 
-                div.innerHTML = `
-                    <label>
-                        <input type="checkbox" class="doc-check" value="${doc.document_id}">
-                        ${doc.filename}
-                    </label>
-                    <br>
-                    <small>
-                        ID: ${doc.document_id} | ${doc.source_type} | Chunks: ${doc.chunks}
-                    </small>
-                `;
+            autoRefreshTimer = setInterval(async () => {
+                await loadDocuments();
+            }, 5000);
+        }
 
-                list.appendChild(div);
-            });
+        function stopAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
         }
 
         function toggleAllDocuments() {
@@ -218,8 +471,16 @@
             const checks = document.querySelectorAll(".doc-check");
 
             checks.forEach(check => {
+                const docId = parseInt(check.value);
+                const doc = documents.find(d => d.document_id === docId);
+
                 check.checked = false;
-                check.disabled = selectAll;
+
+                if (!doc || !isReady(doc)) {
+                    check.disabled = true;
+                } else {
+                    check.disabled = selectAll;
+                }
             });
         }
 
@@ -231,11 +492,33 @@
             }
 
             const selected = [];
+
             document.querySelectorAll(".doc-check:checked").forEach(check => {
                 selected.push(parseInt(check.value));
             });
 
             return selected;
+        }
+
+        function hasReadyDocuments() {
+            return documents.some(doc => isReady(doc));
+        }
+
+        function validateBeforeSend() {
+            const selectAll = document.getElementById("selectAllDocs").checked;
+            const selectedIds = getSelectedDocumentIds();
+
+            if (!hasReadyDocuments()) {
+                addMessage("assistant", "No ready documents are available yet. Please wait until indexing is complete.");
+                return false;
+            }
+
+            if (!selectAll && selectedIds.length === 0) {
+                addMessage("assistant", "Please select at least one ready document, or enable Search all ready documents.");
+                return false;
+            }
+
+            return true;
         }
 
         async function uploadFiles() {
@@ -247,13 +530,24 @@
                 return;
             }
 
+            const allowedExtensions = ["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"];
+
+            for (let file of input.files) {
+                const extension = file.name.split(".").pop().toLowerCase();
+
+                if (!allowedExtensions.includes(extension)) {
+                    status.innerText = `Unsupported file type: ${file.name}`;
+                    return;
+                }
+            }
+
             const formData = new FormData();
 
             for (let file of input.files) {
                 formData.append("files", file);
             }
 
-            status.innerText = "Uploading and indexing files...";
+            status.innerText = "Uploading files... Indexing will continue in background.";
 
             try {
                 const response = await fetch("/upload", {
@@ -263,10 +557,13 @@
 
                 const data = await response.json();
 
-                status.innerText = "Upload completed.";
                 console.log(data);
 
+                status.innerText = "Upload completed. Please wait until document status becomes READY.";
+                input.value = "";
+
                 await loadDocuments();
+                startAutoRefresh();
 
             } catch (error) {
                 status.innerText = "Upload failed.";
@@ -276,16 +573,20 @@
 
         async function sendMessage() {
             const input = document.getElementById("questionInput");
+            const sendBtn = document.getElementById("sendBtn");
             const question = input.value.trim();
 
             if (!question) return;
 
-            addMessage("user", question);
-            input.value = "";
+            if (!validateBeforeSend()) return;
 
             const selectedDocumentIds = getSelectedDocumentIds();
 
-            addMessage("assistant", "Thinking...");
+            addMessage("user", question);
+            input.value = "";
+
+            addMessage("assistant typing", "Thinking...");
+            sendBtn.disabled = true;
 
             const payload = {
                 question: question,
@@ -308,17 +609,7 @@
 
                 removeLastAssistantThinking();
 
-                let answerHtml = data.answer;
-
-                if (data.sources && data.sources.length > 0) {
-                    answerHtml += "\n\nSources:\n";
-
-                    data.sources.forEach(source => {
-                        answerHtml += `• ${source.filename} | Document ID: ${source.document_id} | Chunk: ${source.chunk_number}\n`;
-                    });
-                }
-
-                addMessage("assistant", answerHtml);
+                addAssistantAnswer(data.answer, data.sources || []);
 
                 await loadSessions();
 
@@ -326,6 +617,8 @@
                 removeLastAssistantThinking();
                 addMessage("assistant", "Something went wrong while generating the answer.");
                 console.error(error);
+            } finally {
+                sendBtn.disabled = false;
             }
         }
 
@@ -340,8 +633,50 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
+        function addAssistantAnswer(answer, sources) {
+            const chatBox = document.getElementById("chatBox");
+
+            const div = document.createElement("div");
+            div.className = "message assistant";
+
+            const answerDiv = document.createElement("div");
+            answerDiv.innerText = answer;
+            div.appendChild(answerDiv);
+
+            const copyBtn = document.createElement("button");
+            copyBtn.className = "copy-btn";
+            copyBtn.innerText = "Copy answer";
+            copyBtn.onclick = () => {
+                navigator.clipboard.writeText(answer);
+                copyBtn.innerText = "Copied";
+                setTimeout(() => copyBtn.innerText = "Copy answer", 1200);
+            };
+            div.appendChild(copyBtn);
+
+            if (sources.length > 0) {
+                const sourcesBox = document.createElement("div");
+                sourcesBox.className = "sources-box";
+                sourcesBox.innerHTML = "<strong>Sources</strong>";
+
+                sources.forEach(source => {
+                    const card = document.createElement("div");
+                    card.className = "source-card";
+                    card.innerText =
+                        `${source.filename}\n` +
+                        `Document ID: ${source.document_id} | Chunk: ${source.chunk_number}\n` +
+                        `Retrieval: ${source.retrieval_type || "direct"} | Score: ${source.score}`;
+                    sourcesBox.appendChild(card);
+                });
+
+                div.appendChild(sourcesBox);
+            }
+
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
         function removeLastAssistantThinking() {
-            const messages = document.querySelectorAll(".message.assistant");
+            const messages = document.querySelectorAll(".message.assistant, .message.typing");
 
             if (messages.length === 0) return;
 
@@ -364,42 +699,55 @@
             const chatBox = document.getElementById("chatBox");
             chatBox.innerHTML = "";
 
-            addMessage("assistant", "New chat started. Select documents and ask your question.");
+            addMessage("assistant", "New chat started. Select ready documents and ask your question.");
         }
 
         async function loadSessions() {
-            const response = await fetch("/sessions");
-            const data = await response.json();
+            try {
+                const response = await fetch("/sessions");
+                const data = await response.json();
 
-            const list = document.getElementById("sessionsList");
-            list.innerHTML = "";
+                const list = document.getElementById("sessionsList");
+                list.innerHTML = "";
 
-            if (!data.sessions || data.sessions.length === 0) {
-                list.innerHTML = "<p class='status'>No chat history yet.</p>";
-                return;
+                if (!data.sessions || data.sessions.length === 0) {
+                    list.innerHTML = "<p class='empty-state'>No chat history yet.</p>";
+                    return;
+                }
+
+                data.sessions.forEach(session => {
+                    const div = document.createElement("div");
+                    div.className = "session-item";
+                    div.innerText = session.title;
+                    div.onclick = () => loadSessionMessages(session.session_id);
+                    list.appendChild(div);
+                });
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById("sessionsList").innerHTML =
+                    "<p class='error-text'>Failed to load sessions.</p>";
             }
-
-            data.sessions.forEach(session => {
-                const div = document.createElement("div");
-                div.className = "session-item";
-                div.innerText = session.title;
-                div.onclick = () => loadSessionMessages(session.session_id);
-                list.appendChild(div);
-            });
         }
 
         async function loadSessionMessages(sessionId) {
             currentSessionId = sessionId;
 
-            const response = await fetch(`/sessions/${sessionId}/messages`);
-            const data = await response.json();
+            try {
+                const response = await fetch(`/sessions/${sessionId}/messages`);
+                const data = await response.json();
 
-            const chatBox = document.getElementById("chatBox");
-            chatBox.innerHTML = "";
+                const chatBox = document.getElementById("chatBox");
+                chatBox.innerHTML = "";
 
-            data.messages.forEach(msg => {
-                addMessage(msg.role === "user" ? "user" : "assistant", msg.message);
-            });
+                data.messages.forEach(msg => {
+                    addMessage(msg.role === "user" ? "user" : "assistant", msg.message);
+                });
+
+            } catch (error) {
+                console.error(error);
+                addMessage("assistant", "Failed to load this chat session.");
+            }
         }
 
         window.onload = async function () {
@@ -409,4 +757,5 @@
     </script>
 
 </body>
+
 </html>

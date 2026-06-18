@@ -28,7 +28,7 @@ CHAT_MODEL = "qwen2.5:7b"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 KNOWLEDGE_BASE_FOLDER = "knowledge_base"
-UPLOAD_FOLDER = "uploads"
+UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
 UI_FILE = "kb_chat.html"
 
 MAX_CHUNK_SIZE = 600
@@ -67,8 +67,6 @@ def get_db_connection():
 
 def ensure_folders():
     os.makedirs(KNOWLEDGE_BASE_FOLDER, exist_ok=True)
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs("logs", exist_ok=True)
 
 
 def ensure_schema_updates():
@@ -1200,7 +1198,7 @@ def startup_event():
 
     print("\nKB Chatbot backend started.")
     print("Knowledge base folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
-    print("Uploads folder:", os.path.abspath(UPLOAD_FOLDER))
+    print("Uploaded documents will also be stored in knowledge_base folder.")
 
 
 @app.get("/")
@@ -1291,7 +1289,7 @@ async def upload_documents(request: Request, background_tasks: BackgroundTasks):
 
         result = queue_file_for_indexing(
             file_path=save_path,
-            source_type="user_upload",
+            source_type="knowledge_base",
             force_reindex=False
         )
 
