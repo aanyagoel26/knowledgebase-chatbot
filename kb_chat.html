@@ -197,30 +197,13 @@
             color: #93c5fd;
             margin-top: 8px;
             line-height: 1.4;
+            white-space: pre-wrap;
         }
 
         .error-text {
             color: #fca5a5;
             font-size: 12px;
             margin-top: 6px;
-        }
-
-        .warning {
-            background: #713f12;
-            color: #fde68a;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 13px;
-            margin-bottom: 10px;
-        }
-
-        .success {
-            background: #14532d;
-            color: #bbf7d0;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 13px;
-            margin-bottom: 10px;
         }
 
         .sources-box {
@@ -273,27 +256,6 @@
 
         .copy-btn:hover {
             background: #475569;
-        }
-
-        @media (max-width: 900px) {
-            body {
-                flex-direction: column;
-            }
-
-            .sidebar {
-                width: 100%;
-                height: 42vh;
-                border-right: none;
-                border-bottom: 1px solid #334155;
-            }
-
-            .main {
-                height: 58vh;
-            }
-
-            .message {
-                max-width: 90%;
-            }
         }
     </style>
 </head>
@@ -521,6 +483,36 @@
             return true;
         }
 
+        function buildUploadStatusMessage(data) {
+            let messages = [];
+
+            if (data.results && data.results.length > 0) {
+                data.results.forEach(result => {
+                    if (result.status === "skipped_duplicate") {
+                        messages.push(`${result.filename}: Already exists in knowledge base.`);
+                    } else if (result.status === "skipped_unchanged") {
+                        messages.push(`${result.filename}: Already indexed and unchanged.`);
+                    } else if (result.status === "queued_new_document") {
+                        messages.push(`${result.filename}: Uploaded. Indexing started.`);
+                    } else if (result.status === "queued_for_reindexing") {
+                        messages.push(`${result.filename}: Updated file detected. Re-indexing started.`);
+                    } else if (result.status === "already_processing") {
+                        messages.push(`${result.filename}: Already processing.`);
+                    } else if (result.status === "unsupported") {
+                        messages.push(`${result.filename}: Unsupported file type.`);
+                    } else {
+                        messages.push(`${result.filename}: ${result.message || result.status}`);
+                    }
+                });
+            }
+
+            if (messages.length === 0) {
+                return data.message || "Upload completed.";
+            }
+
+            return messages.join("\n");
+        }
+
         async function uploadFiles() {
             const input = document.getElementById("fileInput");
             const status = document.getElementById("uploadStatus");
@@ -547,7 +539,7 @@
                 formData.append("files", file);
             }
 
-            status.innerText = "Uploading files... Indexing will continue in background.";
+            status.innerText = "Uploading files...";
 
             try {
                 const response = await fetch("/upload", {
@@ -559,7 +551,7 @@
 
                 console.log(data);
 
-                status.innerText = "Upload completed. Please wait until document status becomes READY.";
+                status.innerText = buildUploadStatusMessage(data);
                 input.value = "";
 
                 await loadDocuments();

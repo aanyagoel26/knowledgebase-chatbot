@@ -9,6 +9,8 @@ import shutil
 import hashlib
 import re
 import csv
+import threading
+import time
 from datetime import datetime
 import fitz
 from docx import Document
@@ -27,22 +29,26 @@ DB_PASSWORD = "Aanya2612"
 CHAT_MODEL = "qwen2.5:7b"
 EMBEDDING_MODEL = "nomic-embed-text"
 
-KNOWLEDGE_BASE_FOLDER = "knowledge_base"
+KNOWLEDGE_BASE_FOLDER = r"C:\Users\AANYA\OneDrive\Desktop\mtsl\lop"
 UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
 UI_FILE = "kb_chat.html"
 
-MAX_CHUNK_SIZE = 600
-CHUNK_OVERLAP = 100
+AUTO_SCAN_INTERVAL_SECONDS = 30
 
-PER_DOCUMENT_VECTOR_TOP_K = 12
-PER_DOCUMENT_KEYWORD_TOP_K = 12
-PER_DOCUMENT_DIRECT_TOP_K = 4
-PER_DOCUMENT_CONTEXT_LIMIT = 12
+MAX_CHUNK_SIZE = 1500
+CHUNK_OVERLAP = 200
 
-NEIGHBOR_WINDOW = 2
-MAX_CONTEXT_CHUNKS_TOTAL = 32
+PER_DOCUMENT_VECTOR_TOP_K = 6
+PER_DOCUMENT_KEYWORD_TOP_K = 6
+PER_DOCUMENT_DIRECT_TOP_K = 2
+PER_DOCUMENT_CONTEXT_LIMIT = 5
 
-EMBEDDING_BATCH_SIZE = 16
+NEIGHBOR_WINDOW = 1
+MAX_CONTEXT_CHUNKS_TOTAL = 14
+
+EMBEDDING_BATCH_SIZE = 32
+
+scan_lock = threading.Lock()
 
 
 class RetrieveRequest(BaseModel):
@@ -253,6 +259,7 @@ def is_supported_file(file_path):
     extension = file_path.lower().split(".")[-1]
     return extension in supported_extensions
 
+
 def recursive_split(text, separators):
     if len(text) <= MAX_CHUNK_SIZE:
         return [text]
@@ -420,22 +427,41 @@ def update_document_status(document_id, status, error_message=None, chunk_count=
             )
         )
     else:
-        cursor.execute(
-            """
-            UPDATE documents
-            SET indexing_status = %s,
-                error_message = %s,
-                chunk_count = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE document_id = %s
-            """,
-            (
-                status,
-                error_message,
-                chunk_count,
-                document_id
+        if status == "ready":
+            cursor.execute(
+                """
+                UPDATE documents
+                SET indexing_status = %s,
+                    error_message = %s,
+                    chunk_count = %s,
+                    indexed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE document_id = %s
+                """,
+                (
+                    status,
+                    error_message,
+                    chunk_count,
+                    document_id
+                )
             )
-        )
+        else:
+            cursor.execute(
+                """
+                UPDATE documents
+                SET indexing_status = %s,
+                    error_message = %s,
+                    chunk_count = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE document_id = %s
+                """,
+                (
+                    status,
+                    error_message,
+                    chunk_count,
+                    document_id
+                )
+            )
 
     conn.commit()
     cursor.close()
@@ -510,6 +536,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
                 source_type = %s,
                 indexing_status = 'pending',
                 error_message = NULL,
+                chunk_count = 0,
                 updated_at = CURRENT_TIMESTAMP
             WHERE document_id = %s
             """,
@@ -531,7 +558,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
             "filename": original_filename,
             "document_id": document_id,
             "status": "queued_for_reindexing",
-            "message": "File queued for background indexing.",
+            "message": "Updated file detected. Re-indexing started.",
             "scheduled": True
         }
 
@@ -554,7 +581,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
             "filename": original_filename,
             "document_id": existing_by_hash[0],
             "status": "skipped_duplicate",
-            "message": "Same content already indexed.",
+            "message": "This file already exists in the knowledge base.",
             "scheduled": False
         }
 
@@ -595,7 +622,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
         "filename": original_filename,
         "document_id": document_id,
         "status": "queued_new_document",
-        "message": "File queued for background indexing.",
+        "message": "New file queued for background indexing.",
         "scheduled": True
     }
 
@@ -688,11 +715,60 @@ def process_document_indexing(document_id, file_path):
         update_document_status(document_id, "failed", error_text, 0)
 
 
+def scan_knowledge_base_once(force_reindex=False):
+    if scan_lock.locked():
+        print("Scan already running. Skipping this cycle.")
+        return
+
+    with scan_lock:
+        ensure_folders()
+
+        print("\n" + "=" * 80)
+        print("AUTO SCANNING BACKEND KNOWLEDGE FOLDER")
+        print("=" * 80)
+        print("Folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+
+        for root, dirs, files in os.walk(KNOWLEDGE_BASE_FOLDER):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+
+                if not is_supported_file(file_path):
+                    continue
+
+                result = queue_file_for_indexing(
+                    file_path=file_path,
+                    source_type="knowledge_base",
+                    force_reindex=force_reindex
+                )
+
+                print(result)
+
+                if result.get("scheduled"):
+                    process_document_indexing(
+                        result["document_id"],
+                        os.path.abspath(file_path)
+                    )
+
+
+def knowledge_base_auto_watcher():
+    print("\nKnowledge base auto watcher started.")
+    print("Watching folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+
+    while True:
+        try:
+            scan_knowledge_base_once(False)
+        except Exception as error:
+            print("Auto watcher error:")
+            print(error)
+
+        time.sleep(AUTO_SCAN_INTERVAL_SECONDS)
+
+
 def scan_knowledge_base(background_tasks, force_reindex=False):
     ensure_folders()
 
     print("\n" + "=" * 80)
-    print("SCANNING KNOWLEDGE BASE")
+    print("MANUAL SCANNING KNOWLEDGE BASE")
     print("=" * 80)
 
     results = []
@@ -1198,7 +1274,14 @@ def startup_event():
 
     print("\nKB Chatbot backend started.")
     print("Knowledge base folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
-    print("Uploaded documents will also be stored in knowledge_base folder.")
+    print("Direct backend files placed in this folder will be auto-detected and indexed.")
+
+    watcher_thread = threading.Thread(
+        target=knowledge_base_auto_watcher,
+        daemon=True
+    )
+
+    watcher_thread.start()
 
 
 @app.get("/")
@@ -1282,7 +1365,9 @@ async def upload_documents(request: Request, background_tasks: BackgroundTasks):
             results.append(
                 {
                     "filename": safe_filename,
-                    "status": "unsupported"
+                    "status": "unsupported",
+                    "message": "Unsupported file type.",
+                    "scheduled": False
                 }
             )
             continue
@@ -1303,7 +1388,7 @@ async def upload_documents(request: Request, background_tasks: BackgroundTasks):
             )
 
     return {
-        "message": "Upload completed. Indexing is running in background.",
+        "message": "Upload completed.",
         "results": results
     }
 
@@ -1322,13 +1407,26 @@ def list_documents():
             d.version,
             d.indexing_status,
             d.error_message,
-            COALESCE(d.chunk_count, COUNT(c.chunk_id)) AS chunks,
+            CASE 
+                WHEN d.chunk_count IS NULL OR d.chunk_count = 0
+                THEN COUNT(c.chunk_id)
+                ELSE d.chunk_count
+            END AS chunks,
             d.indexed_at,
             d.updated_at
         FROM documents d
         LEFT JOIN document_chunks c
         ON d.document_id = c.document_id
-        GROUP BY d.document_id
+        GROUP BY 
+            d.document_id,
+            d.original_filename,
+            d.source_type,
+            d.version,
+            d.indexing_status,
+            d.error_message,
+            d.chunk_count,
+            d.indexed_at,
+            d.updated_at
         ORDER BY d.updated_at DESC;
         """
     )
