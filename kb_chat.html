@@ -745,6 +745,10 @@
         window.onload = async function () {
             await loadDocuments();
             await loadSessions();
+
+            setInterval(async () => {
+                await loadDocuments();
+            }, 5000);
         };
     </script>
 

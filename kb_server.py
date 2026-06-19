@@ -494,8 +494,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
         unchanged = (
             old_hash == file_hash
             and old_size == metadata["file_size"]
-            and old_modified == metadata["last_modified"]
-        )
+            )
 
         if unchanged and old_status == "ready" and not force_reindex:
             cursor.close()
