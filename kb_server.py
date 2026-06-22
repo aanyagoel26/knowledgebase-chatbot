@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, Response, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import psycopg2
@@ -11,6 +11,7 @@ import re
 import csv
 import threading
 import time
+import uuid
 from datetime import datetime
 import fitz
 from docx import Document
@@ -29,11 +30,12 @@ DB_PASSWORD = "Aanya2612"
 CHAT_MODEL = "qwen2.5:7b"
 EMBEDDING_MODEL = "nomic-embed-text"
 
-KNOWLEDGE_BASE_FOLDER = r"C:\Users\AANYA\OneDrive\Desktop\mtsl\lop"
+DEFAULT_KNOWLEDGE_BASE_FOLDER = "knowledge_base"
+KNOWLEDGE_BASE_FOLDER = DEFAULT_KNOWLEDGE_BASE_FOLDER
 UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
 UI_FILE = "kb_chat.html"
 
-AUTO_SCAN_INTERVAL_SECONDS = 30
+AUTO_SCAN_INTERVAL_SECONDS = 3600
 
 MAX_CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
@@ -62,6 +64,15 @@ class ChatRequest(BaseModel):
     document_ids: list[int] = []
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class FolderRequest(BaseModel):
+    folder_path: str
+
+
 def get_db_connection():
     return psycopg2.connect(
         host=DB_HOST,
@@ -71,8 +82,48 @@ def get_db_connection():
     )
 
 
-def ensure_folders():
-    os.makedirs(KNOWLEDGE_BASE_FOLDER, exist_ok=True)
+def hash_password(password):
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def get_session_token(request: Request):
+    return request.cookies.get("kb_session_token")
+
+
+def require_login(request: Request):
+    token = get_session_token(request)
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT e.employee_id, e.name, e.email, e.role
+        FROM employee_sessions s
+        JOIN employees e
+        ON s.employee_id = e.employee_id
+        WHERE s.session_token = %s
+        """,
+        (token,)
+    )
+
+    row = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    return {
+        "employee_id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "role": row[3]
+    }
 
 
 def ensure_schema_updates():
@@ -100,9 +151,127 @@ def ensure_schema_updates():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employees (
+            employee_id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'employee',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_sessions (
+            session_id SERIAL PRIMARY KEY,
+            employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE,
+            session_token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        SELECT employee_id
+        FROM employees
+        WHERE email = %s
+        """,
+        ("admin@motherson.com",)
+    )
+
+    existing_admin = cursor.fetchone()
+
+    if not existing_admin:
+        cursor.execute(
+            """
+            INSERT INTO employees(name, email, password_hash, role)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                "Admin",
+                "admin@motherson.com",
+                hash_password("admin123"),
+                "admin"
+            )
+        )
+
     conn.commit()
     cursor.close()
     conn.close()
+
+
+def get_setting(key, default_value=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT setting_value
+        FROM app_settings
+        WHERE setting_key = %s
+        """,
+        (key,)
+    )
+
+    row = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if row:
+        return row[0]
+
+    return default_value
+
+
+def set_setting(key, value):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO app_settings(setting_key, setting_value)
+        VALUES (%s, %s)
+        ON CONFLICT(setting_key)
+        DO UPDATE SET
+            setting_value = EXCLUDED.setting_value,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (key, value)
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def load_knowledge_folder_from_db():
+    global KNOWLEDGE_BASE_FOLDER
+    global UPLOAD_FOLDER
+
+    saved_folder = get_setting("knowledge_base_folder", DEFAULT_KNOWLEDGE_BASE_FOLDER)
+
+    KNOWLEDGE_BASE_FOLDER = saved_folder
+    UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
+
+
+def ensure_folders():
+    os.makedirs(KNOWLEDGE_BASE_FOLDER, exist_ok=True)
 
 
 def calculate_file_hash(file_path):
@@ -411,57 +580,41 @@ def update_document_status(document_id, status, error_message=None, chunk_count=
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    if chunk_count is None:
+    if status == "ready":
         cursor.execute(
             """
             UPDATE documents
             SET indexing_status = %s,
                 error_message = %s,
+                chunk_count = %s,
+                indexed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE document_id = %s
             """,
             (
                 status,
                 error_message,
+                chunk_count,
                 document_id
             )
         )
     else:
-        if status == "ready":
-            cursor.execute(
-                """
-                UPDATE documents
-                SET indexing_status = %s,
-                    error_message = %s,
-                    chunk_count = %s,
-                    indexed_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE document_id = %s
-                """,
-                (
-                    status,
-                    error_message,
-                    chunk_count,
-                    document_id
-                )
+        cursor.execute(
+            """
+            UPDATE documents
+            SET indexing_status = %s,
+                error_message = %s,
+                chunk_count = COALESCE(%s, chunk_count),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE document_id = %s
+            """,
+            (
+                status,
+                error_message,
+                chunk_count,
+                document_id
             )
-        else:
-            cursor.execute(
-                """
-                UPDATE documents
-                SET indexing_status = %s,
-                    error_message = %s,
-                    chunk_count = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE document_id = %s
-                """,
-                (
-                    status,
-                    error_message,
-                    chunk_count,
-                    document_id
-                )
-            )
+        )
 
     conn.commit()
     cursor.close()
@@ -479,7 +632,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
 
     cursor.execute(
         """
-        SELECT document_id, file_hash, file_size, last_modified, version, indexing_status
+        SELECT document_id, file_hash, file_size, version, indexing_status
         FROM documents
         WHERE file_path = %s
         """,
@@ -489,12 +642,12 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
     existing_by_path = cursor.fetchone()
 
     if existing_by_path:
-        document_id, old_hash, old_size, old_modified, old_version, old_status = existing_by_path
+        document_id, old_hash, old_size, old_version, old_status = existing_by_path
 
         unchanged = (
             old_hash == file_hash
             and old_size == metadata["file_size"]
-            )
+        )
 
         if unchanged and old_status == "ready" and not force_reindex:
             cursor.close()
@@ -639,9 +792,6 @@ def process_document_indexing(document_id, file_path):
         extracted_text = extract_text(file_path)
         chunks = split_text_into_chunks(extracted_text)
 
-        print("Characters extracted:", len(extracted_text))
-        print("Chunks created:", len(chunks))
-
         conn = get_db_connection()
         cursor = conn.cursor()
 
@@ -657,11 +807,6 @@ def process_document_indexing(document_id, file_path):
 
         for batch_start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
             batch_chunks = chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
-
-            print(
-                f"Embedding batch {batch_start + 1} to "
-                f"{batch_start + len(batch_chunks)} of {len(chunks)}"
-            )
 
             embeddings = generate_embeddings_batch(batch_chunks)
 
@@ -717,13 +862,15 @@ def process_document_indexing(document_id, file_path):
 def scan_knowledge_base_once(force_reindex=False):
     if scan_lock.locked():
         print("Scan already running. Skipping this cycle.")
-        return
+        return []
+
+    results = []
 
     with scan_lock:
         ensure_folders()
 
         print("\n" + "=" * 80)
-        print("AUTO SCANNING BACKEND KNOWLEDGE FOLDER")
+        print("SCANNING KNOWLEDGE BASE FOLDER")
         print("=" * 80)
         print("Folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
 
@@ -740,6 +887,7 @@ def scan_knowledge_base_once(force_reindex=False):
                     force_reindex=force_reindex
                 )
 
+                results.append(result)
                 print(result)
 
                 if result.get("scheduled"):
@@ -748,59 +896,21 @@ def scan_knowledge_base_once(force_reindex=False):
                         os.path.abspath(file_path)
                     )
 
+    return results
 
-def knowledge_base_auto_watcher():
-    print("\nKnowledge base auto watcher started.")
+
+def hourly_knowledge_base_watcher():
+    print("\nHourly knowledge base watcher started.")
     print("Watching folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
 
     while True:
+        time.sleep(AUTO_SCAN_INTERVAL_SECONDS)
+
         try:
             scan_knowledge_base_once(False)
         except Exception as error:
-            print("Auto watcher error:")
+            print("Hourly watcher error:")
             print(error)
-
-        time.sleep(AUTO_SCAN_INTERVAL_SECONDS)
-
-
-def scan_knowledge_base(background_tasks, force_reindex=False):
-    ensure_folders()
-
-    print("\n" + "=" * 80)
-    print("MANUAL SCANNING KNOWLEDGE BASE")
-    print("=" * 80)
-
-    results = []
-
-    for root, dirs, files in os.walk(KNOWLEDGE_BASE_FOLDER):
-        for filename in files:
-            file_path = os.path.join(root, filename)
-
-            if not is_supported_file(file_path):
-                results.append(
-                    {
-                        "filename": filename,
-                        "status": "unsupported"
-                    }
-                )
-                continue
-
-            result = queue_file_for_indexing(
-                file_path=file_path,
-                source_type="knowledge_base",
-                force_reindex=force_reindex
-            )
-
-            results.append(result)
-
-            if result.get("scheduled"):
-                background_tasks.add_task(
-                    process_document_indexing,
-                    result["document_id"],
-                    os.path.abspath(file_path)
-                )
-
-    return results
 
 
 def get_ready_document_ids():
@@ -1076,12 +1186,6 @@ def retrieve_relevant_chunks(question, document_ids=None):
         conn.close()
         return []
 
-    print("\n" + "=" * 80)
-    print("BALANCED MULTI-DOCUMENT RETRIEVAL STARTED")
-    print("=" * 80)
-    print("Question:", question)
-    print("Documents:", target_document_ids)
-
     per_document_limit = max(
         3,
         min(
@@ -1093,8 +1197,6 @@ def retrieve_relevant_chunks(question, document_ids=None):
     final_chunks = []
 
     for document_id in target_document_ids:
-        print("\nRetrieving for document:", document_id)
-
         vector_rows = get_vector_rows(
             cursor,
             question,
@@ -1126,23 +1228,7 @@ def retrieve_relevant_chunks(question, document_ids=None):
     cursor.close()
     conn.close()
 
-    final_chunks = final_chunks[:MAX_CONTEXT_CHUNKS_TOTAL]
-
-    print("\n" + "=" * 80)
-    print("FINAL BALANCED CONTEXT CHUNKS")
-    print("=" * 80)
-
-    for index, chunk in enumerate(final_chunks, start=1):
-        print("Context Rank:", index)
-        print("Document ID:", chunk["document_id"])
-        print("File:", chunk["filename"])
-        print("Chunk:", chunk["chunk_number"])
-        print("Retrieval Type:", chunk["retrieval_type"])
-        print("Score:", round(chunk["final_score"], 4))
-        print("Preview:", chunk["content"][:300])
-        print("-" * 80)
-
-    return final_chunks
+    return final_chunks[:MAX_CONTEXT_CHUNKS_TOTAL]
 
 
 def create_session_if_needed(session_id, first_question):
@@ -1225,7 +1311,6 @@ Rules:
 - If multiple related points are present, include all relevant points.
 - If the exact answer is spread across multiple chunks, combine them into one complete answer.
 - If the question is vague, summarize the most relevant information from all provided documents.
-- If the user asks "this pdf" or "this document", answer only from the selected document content that was provided.
 - Keep the answer clear, professional, and structured.
 - Do not say "based on context" or "retrieved chunks".
 """
@@ -1268,15 +1353,16 @@ Give the final answer only.
 
 @app.on_event("startup")
 def startup_event():
-    ensure_folders()
     ensure_schema_updates()
+    load_knowledge_folder_from_db()
+    ensure_folders()
 
     print("\nKB Chatbot backend started.")
     print("Knowledge base folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
-    print("Direct backend files placed in this folder will be auto-detected and indexed.")
+    print("Hourly indexing enabled. Manual indexing also available.")
 
     watcher_thread = threading.Thread(
-        target=knowledge_base_auto_watcher,
+        target=hourly_knowledge_base_watcher,
         daemon=True
     )
 
@@ -1288,6 +1374,102 @@ def home():
     return FileResponse(UI_FILE)
 
 
+@app.post("/login")
+def login(request: LoginRequest, response: Response):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT employee_id, name, email, role
+        FROM employees
+        WHERE email = %s
+          AND password_hash = %s
+        """,
+        (
+            request.email.strip().lower(),
+            hash_password(request.password)
+        )
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    session_token = str(uuid.uuid4())
+
+    cursor.execute(
+        """
+        INSERT INTO employee_sessions(employee_id, session_token)
+        VALUES (%s, %s)
+        """,
+        (
+            row[0],
+            session_token
+        )
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    response.set_cookie(
+        key="kb_session_token",
+        value=session_token,
+        httponly=True,
+        samesite="lax"
+    )
+
+    return {
+        "message": "Login successful",
+        "employee": {
+            "employee_id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "role": row[3]
+        }
+    }
+
+
+@app.post("/logout")
+def logout(request: Request, response: Response):
+    token = get_session_token(request)
+
+    if token:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM employee_sessions
+            WHERE session_token = %s
+            """,
+            (token,)
+        )
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    response.delete_cookie("kb_session_token")
+
+    return {
+        "message": "Logged out"
+    }
+
+
+@app.get("/me")
+def me(request: Request):
+    employee = require_login(request)
+
+    return {
+        "employee": employee
+    }
+
+
 @app.get("/health")
 def health_check():
     return {
@@ -1295,51 +1477,59 @@ def health_check():
     }
 
 
-@app.get("/db-check")
-def db_check():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-            ORDER BY table_name;
-            """
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
-        conn.close()
-
-        return {
-            "database": "connected",
-            "tables": [row[0] for row in rows]
-        }
-
-    except Exception as error:
-        return {
-            "database": "connection failed",
-            "error": str(error)
-        }
-
-
-@app.post("/index-knowledge-base")
-def index_knowledge_base(background_tasks: BackgroundTasks, force: bool = False):
-    results = scan_knowledge_base(background_tasks, force)
+@app.get("/knowledge-folder")
+def get_knowledge_folder(request: Request):
+    require_login(request)
 
     return {
-        "message": "Knowledge base files queued for background indexing.",
-        "force_reindex": force,
-        "results": results
+        "folder_path": KNOWLEDGE_BASE_FOLDER
+    }
+
+
+@app.post("/set-knowledge-folder")
+def set_knowledge_folder(request: FolderRequest, http_request: Request):
+    require_login(http_request)
+
+    global KNOWLEDGE_BASE_FOLDER
+    global UPLOAD_FOLDER
+
+    folder_path = request.folder_path.strip()
+
+    if not os.path.isdir(folder_path):
+        return {
+            "success": False,
+            "message": "Folder path does not exist.",
+            "folder_path": folder_path
+        }
+
+    KNOWLEDGE_BASE_FOLDER = folder_path
+    UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
+
+    set_setting("knowledge_base_folder", folder_path)
+    ensure_folders()
+
+    return {
+        "success": True,
+        "message": "Knowledge folder saved successfully.",
+        "folder_path": KNOWLEDGE_BASE_FOLDER
+    }
+
+
+@app.post("/index-now")
+def index_now(request: Request, background_tasks: BackgroundTasks, force: bool = False):
+    require_login(request)
+
+    background_tasks.add_task(scan_knowledge_base_once, force)
+
+    return {
+        "message": "Manual indexing started in background.",
+        "force": force
     }
 
 
 @app.post("/upload")
 async def upload_documents(request: Request, background_tasks: BackgroundTasks):
+    require_login(request)
     ensure_folders()
 
     form = await request.form()
@@ -1393,7 +1583,9 @@ async def upload_documents(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.get("/documents")
-def list_documents():
+def list_documents(request: Request):
+    require_login(request)
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1453,17 +1645,55 @@ def list_documents():
     }
 
 
+@app.get("/download-document/{document_id}")
+def download_document(document_id: int, request: Request):
+    require_login(request)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT original_filename, file_path
+        FROM documents
+        WHERE document_id = %s
+        """,
+        (document_id,)
+    )
+
+    row = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    filename, file_path = row
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+
+    return FileResponse(
+        file_path,
+        filename=filename,
+        media_type="application/octet-stream"
+    )
+
+
 @app.post("/retrieve")
-def retrieve(request: RetrieveRequest):
+def retrieve(request_data: RetrieveRequest, request: Request):
+    require_login(request)
+
     chunks = retrieve_relevant_chunks(
-        request.question,
-        request.document_ids
+        request_data.question,
+        request_data.document_ids
     )
 
     return {
-        "question": request.question,
-        "document_ids": request.document_ids,
-        "search_scope": "selected_documents" if request.document_ids else "all_ready_documents",
+        "question": request_data.question,
+        "document_ids": request_data.document_ids,
+        "search_scope": "selected_documents" if request_data.document_ids else "all_ready_documents",
         "chunks": [
             {
                 "rank": index + 1,
@@ -1483,17 +1713,19 @@ def retrieve(request: RetrieveRequest):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request_data: ChatRequest, request: Request):
+    require_login(request)
+
     session_id = create_session_if_needed(
-        request.session_id,
-        request.question
+        request_data.session_id,
+        request_data.question
     )
 
-    save_message(session_id, "user", request.question)
+    save_message(session_id, "user", request_data.question)
 
     chunks = retrieve_relevant_chunks(
-        request.question,
-        request.document_ids
+        request_data.question,
+        request_data.document_ids
     )
 
     if not chunks:
@@ -1506,30 +1738,32 @@ def chat(request: ChatRequest):
             "sources": []
         }
 
-    answer = generate_answer(request.question, chunks)
+    answer = generate_answer(request_data.question, chunks)
 
     save_message(session_id, "assistant", answer)
+
+    unique_sources = {}
+
+    for chunk in chunks:
+        unique_sources[chunk["document_id"]] = {
+            "document_id": chunk["document_id"],
+            "filename": chunk["filename"],
+            "download_url": f"/download-document/{chunk['document_id']}"
+        }
 
     return {
         "session_id": session_id,
         "answer": answer,
-        "search_scope": "selected_documents" if request.document_ids else "all_ready_documents",
-        "document_ids": request.document_ids,
-        "sources": [
-            {
-                "document_id": chunk["document_id"],
-                "filename": chunk["filename"],
-                "chunk_number": chunk["chunk_number"],
-                "retrieval_type": chunk["retrieval_type"],
-                "score": round(chunk["final_score"], 4)
-            }
-            for chunk in chunks
-        ]
+        "search_scope": "selected_documents" if request_data.document_ids else "all_ready_documents",
+        "document_ids": request_data.document_ids,
+        "sources": list(unique_sources.values())
     }
 
 
 @app.get("/sessions")
-def get_sessions():
+def get_sessions(request: Request):
+    require_login(request)
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1559,7 +1793,9 @@ def get_sessions():
 
 
 @app.get("/sessions/{session_id}/messages")
-def get_session_messages(session_id: int):
+def get_session_messages(session_id: int, request: Request):
+    require_login(request)
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -1587,4 +1823,4 @@ def get_session_messages(session_id: int):
             }
             for row in rows
         ]
-    }
+    } 

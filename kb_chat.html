@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-    <title>KB Chatbot</title>
+    <title>Motherson Knowledge Assistant</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
@@ -13,17 +12,75 @@
 
         body {
             margin: 0;
-            background: #0f172a;
-            color: white;
+            background: #f8f9fb;
+            color: #1f2937;
+            height: 100vh;
+        }
+
+        .login-page {
             height: 100vh;
             display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #b91c1c, #ffffff);
+        }
+
+        .login-card {
+            width: 380px;
+            background: white;
+            padding: 30px;
+            border-radius: 18px;
+            box-shadow: 0 20px 45px rgba(0,0,0,0.18);
+        }
+
+        .login-card h1 {
+            color: #b91c1c;
+            margin-bottom: 5px;
+        }
+
+        .login-card p {
+            color: #6b7280;
+            margin-bottom: 20px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            margin-top: 8px;
+            margin-bottom: 12px;
+            outline: none;
+        }
+
+        button {
+            background: #b91c1c;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 9px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #991b1b;
+        }
+
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .app {
+            display: none;
+            height: 100vh;
         }
 
         .sidebar {
-            width: 340px;
-            background: #111827;
+            width: 350px;
+            background: white;
+            border-right: 1px solid #e5e7eb;
             padding: 18px;
-            border-right: 1px solid #334155;
             overflow-y: auto;
         }
 
@@ -35,67 +92,94 @@
         }
 
         .topbar {
-            padding: 16px 24px;
-            background: #111827;
-            border-bottom: 1px solid #334155;
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 14px 22px;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .topbar-title {
+        .brand {
             font-size: 20px;
             font-weight: bold;
+            color: #b91c1c;
         }
 
-        .topbar-status {
+        .user-info {
             font-size: 13px;
-            color: #93c5fd;
+            color: #4b5563;
         }
 
-        h2,
-        h3 {
+        h2, h3 {
             margin-top: 0;
-        }
-
-        button {
-            background: #2563eb;
-            color: white;
-            border: none;
-            padding: 10px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            margin-top: 8px;
-        }
-
-        button:hover {
-            background: #1d4ed8;
-        }
-
-        button:disabled {
-            background: #475569;
-            cursor: not-allowed;
-        }
-
-        input[type="file"] {
-            width: 100%;
-            margin-top: 8px;
-            color: #cbd5e1;
+            color: #111827;
         }
 
         .small-btn {
             width: 100%;
-            margin-bottom: 10px;
+            margin-top: 8px;
+            margin-bottom: 8px;
         }
 
-        .doc-item,
-        .session-item {
-            background: #1e293b;
+        .secondary-btn {
+            background: #374151;
+        }
+
+        .secondary-btn:hover {
+            background: #1f2937;
+        }
+
+        .danger-btn {
+            background: #dc2626;
+        }
+
+        .folder-box, .search-box, .section-box {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .status {
+            font-size: 13px;
+            color: #6b7280;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+
+        .error {
+            color: #dc2626;
+            font-size: 13px;
+        }
+
+        .success {
+            color: #15803d;
+            font-size: 13px;
+        }
+
+        .doc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .collapse-btn {
+            width: auto;
+            padding: 6px 10px;
+            font-size: 12px;
+            background: #ef4444;
+        }
+
+        .doc-item, .session-item {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-left: 4px solid #b91c1c;
             padding: 10px;
             border-radius: 10px;
             margin-bottom: 8px;
             font-size: 14px;
-            border: 1px solid #334155;
         }
 
         .session-item {
@@ -103,7 +187,7 @@
         }
 
         .session-item:hover {
-            background: #334155;
+            background: #fef2f2;
         }
 
         .doc-name {
@@ -113,7 +197,7 @@
 
         .doc-meta {
             font-size: 12px;
-            color: #cbd5e1;
+            color: #6b7280;
             margin-top: 5px;
             line-height: 1.5;
         }
@@ -128,29 +212,30 @@
         }
 
         .ready {
-            background: #14532d;
-            color: #86efac;
+            background: #dcfce7;
+            color: #166534;
         }
 
         .indexing {
-            background: #713f12;
-            color: #fde68a;
+            background: #fef3c7;
+            color: #92400e;
         }
 
         .pending {
-            background: #1e3a8a;
-            color: #bfdbfe;
+            background: #dbeafe;
+            color: #1e40af;
         }
 
         .failed {
-            background: #7f1d1d;
-            color: #fecaca;
+            background: #fee2e2;
+            color: #991b1b;
         }
 
         .chat-box {
             flex: 1;
-            padding: 24px;
             overflow-y: auto;
+            padding: 24px;
+            background: #f8f9fb;
         }
 
         .message {
@@ -164,152 +249,164 @@
         }
 
         .user {
-            background: #2563eb;
+            background: #b91c1c;
+            color: white;
             margin-left: auto;
         }
 
         .assistant {
-            background: #1e293b;
+            background: white;
+            border: 1px solid #e5e7eb;
             margin-right: auto;
-            border: 1px solid #334155;
+            color: #111827;
+        }
+
+        .typing {
+            opacity: 0.7;
+            font-style: italic;
         }
 
         .input-area {
             display: flex;
             gap: 10px;
             padding: 16px;
-            border-top: 1px solid #334155;
-            background: #111827;
+            background: white;
+            border-top: 1px solid #e5e7eb;
         }
 
         .input-area input {
-            flex: 1;
-            padding: 14px;
-            border-radius: 10px;
-            border: none;
-            outline: none;
-            background: #f8fafc;
-            color: #0f172a;
-        }
-
-        .status {
-            font-size: 13px;
-            color: #93c5fd;
-            margin-top: 8px;
-            line-height: 1.4;
-            white-space: pre-wrap;
-        }
-
-        .error-text {
-            color: #fca5a5;
-            font-size: 12px;
-            margin-top: 6px;
+            margin: 0;
         }
 
         .sources-box {
             margin-top: 12px;
-            border-top: 1px solid #475569;
+            border-top: 1px solid #e5e7eb;
             padding-top: 10px;
-            font-size: 12px;
-            color: #cbd5e1;
-        }
-
-        .source-card {
-            background: #0f172a;
-            border: 1px solid #334155;
-            padding: 8px;
-            border-radius: 8px;
-            margin-top: 6px;
-        }
-
-        hr {
-            border: 0;
-            border-top: 1px solid #334155;
-            margin: 18px 0;
-        }
-
-        .search-all-box {
-            background: #1e293b;
-            padding: 10px;
-            border-radius: 8px;
-            margin: 10px 0;
-            border: 1px solid #334155;
-        }
-
-        .empty-state {
-            color: #94a3b8;
             font-size: 13px;
-            line-height: 1.5;
         }
 
-        .typing {
-            opacity: 0.8;
-            font-style: italic;
+        .source-link {
+            display: block;
+            color: #b91c1c;
+            text-decoration: none;
+            margin-top: 6px;
+            font-weight: bold;
+        }
+
+        .source-link:hover {
+            text-decoration: underline;
         }
 
         .copy-btn {
-            background: #334155;
+            background: #374151;
             font-size: 12px;
             padding: 6px 10px;
             margin-top: 8px;
         }
 
-        .copy-btn:hover {
-            background: #475569;
+        hr {
+            border: 0;
+            border-top: 1px solid #e5e7eb;
+            margin: 18px 0;
+        }
+
+        .empty-state {
+            color: #6b7280;
+            font-size: 13px;
         }
     </style>
 </head>
 
 <body>
 
-    <div class="sidebar">
-        <h2>KB Chatbot</h2>
+    <div class="login-page" id="loginPage">
+        <div class="login-card">
+            <h1>Motherson</h1>
+            <p>Enterprise Knowledge Assistant</p>
 
-        <button class="small-btn" onclick="newChat()">+ New Chat</button>
+            <label>Email</label>
+            <input type="email" id="loginEmail" placeholder="admin@motherson.com">
 
-        <hr>
+            <label>Password</label>
+            <input type="password" id="loginPassword" placeholder="Password">
 
-        <h3>Upload Documents</h3>
-        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
-        <button class="small-btn" onclick="uploadFiles()">Upload</button>
-        <div id="uploadStatus" class="status"></div>
+            <button class="small-btn" onclick="login()">Login</button>
 
-        <hr>
+            <div id="loginStatus" class="error"></div>
 
-        <h3>Documents</h3>
-        <button class="small-btn" onclick="loadDocuments()">Refresh Documents</button>
-
-        <div class="search-all-box">
-            <label>
-                <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
-                Search all ready documents
-            </label>
+            <p style="font-size:12px;color:#6b7280;margin-top:14px;">
+                Default: admin@motherson.com / admin123
+            </p>
         </div>
-
-        <div id="documentsList"></div>
-
-        <hr>
-
-        <h3>Chat History</h3>
-        <button class="small-btn" onclick="loadSessions()">Refresh History</button>
-        <div id="sessionsList"></div>
     </div>
 
-    <div class="main">
-        <div class="topbar">
-            <div class="topbar-title">Enterprise Knowledge Assistant</div>
-            <div class="topbar-status" id="systemStatus">Connected</div>
-        </div>
+    <div class="app" id="appPage">
+        <div class="sidebar">
+            <h2>Motherson KB</h2>
 
-        <div class="chat-box" id="chatBox">
-            <div class="message assistant">
-                Hi! Upload or select ready documents, then ask me anything from the knowledge base.
+            <button class="small-btn" onclick="newChat()">+ New Chat</button>
+            <button class="small-btn danger-btn" onclick="logout()">Logout</button>
+
+            <hr>
+
+            <h3>Knowledge Folder</h3>
+            <div class="folder-box">
+                <input type="text" id="folderInput" placeholder="Paste folder path here">
+                <button class="small-btn" onclick="setKnowledgeFolder()">Save Folder</button>
+                <button class="small-btn secondary-btn" onclick="indexNow()">Index Now</button>
+                <div id="folderStatus" class="status"></div>
             </div>
+
+            <hr>
+
+            <h3>Upload Documents</h3>
+            <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
+            <button class="small-btn" onclick="uploadFiles()">Upload</button>
+            <div id="uploadStatus" class="status"></div>
+
+            <hr>
+
+            <div class="doc-header">
+                <h3>Documents</h3>
+                <button class="collapse-btn" onclick="toggleDocsPanel()" id="docsToggleBtn">Collapse</button>
+            </div>
+
+            <div id="docsPanel">
+                <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh Documents</button>
+
+                <div class="search-box">
+                    <label>
+                        <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
+                        Search all ready documents
+                    </label>
+                </div>
+
+                <div id="documentsList"></div>
+            </div>
+
+            <hr>
+
+            <h3>Chat History</h3>
+            <button class="small-btn secondary-btn" onclick="loadSessions()">Refresh History</button>
+            <div id="sessionsList"></div>
         </div>
 
-        <div class="input-area">
-            <input type="text" id="questionInput" placeholder="Ask a question..." onkeydown="handleEnter(event)">
-            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        <div class="main">
+            <div class="topbar">
+                <div class="brand">Enterprise Knowledge Assistant</div>
+                <div class="user-info" id="userInfo">Logged in</div>
+            </div>
+
+            <div class="chat-box" id="chatBox">
+                <div class="message assistant">
+Hi! Select ready documents or search all ready documents, then ask a question.
+                </div>
+            </div>
+
+            <div class="input-area">
+                <input type="text" id="questionInput" placeholder="Ask a question..." onkeydown="handleEnter(event)">
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
         </div>
     </div>
 
@@ -317,6 +414,140 @@
         let currentSessionId = null;
         let documents = [];
         let autoRefreshTimer = null;
+        let docsCollapsed = false;
+
+        async function checkLogin() {
+            try {
+                const response = await fetch("/me");
+                if (!response.ok) throw new Error("Not logged in");
+
+                const data = await response.json();
+                showApp(data.employee);
+            } catch {
+                showLogin();
+            }
+        }
+
+        function showLogin() {
+            document.getElementById("loginPage").style.display = "flex";
+            document.getElementById("appPage").style.display = "none";
+        }
+
+        async function showApp(employee) {
+            document.getElementById("loginPage").style.display = "none";
+            document.getElementById("appPage").style.display = "flex";
+            document.getElementById("userInfo").innerText =
+                `${employee.name} | ${employee.role}`;
+
+            await loadKnowledgeFolder();
+            await loadDocuments();
+            await loadSessions();
+
+            startDocumentAutoRefresh();
+        }
+
+        async function login() {
+            const email = document.getElementById("loginEmail").value.trim();
+            const password = document.getElementById("loginPassword").value;
+            const status = document.getElementById("loginStatus");
+
+            status.innerText = "";
+
+            try {
+                const response = await fetch("/login", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({email, password})
+                });
+
+                if (!response.ok) {
+                    status.innerText = "Invalid email or password.";
+                    return;
+                }
+
+                const data = await response.json();
+                showApp(data.employee);
+
+            } catch (error) {
+                status.innerText = "Login failed.";
+                console.error(error);
+            }
+        }
+
+        async function logout() {
+            await fetch("/logout", {method: "POST"});
+            currentSessionId = null;
+            showLogin();
+        }
+
+        async function loadKnowledgeFolder() {
+            try {
+                const response = await fetch("/knowledge-folder");
+                const data = await response.json();
+
+                document.getElementById("folderInput").value = data.folder_path || "";
+                document.getElementById("folderStatus").innerText =
+                    "Current folder: " + (data.folder_path || "Not set");
+            } catch (error) {
+                document.getElementById("folderStatus").innerText = "Could not load folder.";
+            }
+        }
+
+        async function setKnowledgeFolder() {
+            const folderPath = document.getElementById("folderInput").value.trim();
+            const status = document.getElementById("folderStatus");
+
+            if (!folderPath) {
+                status.innerText = "Please enter a folder path.";
+                return;
+            }
+
+            try {
+                const response = await fetch("/set-knowledge-folder", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({folder_path: folderPath})
+                });
+
+                const data = await response.json();
+
+                status.innerText = data.message;
+
+                if (data.success) {
+                    await loadDocuments();
+                }
+
+            } catch (error) {
+                status.innerText = "Failed to save folder.";
+                console.error(error);
+            }
+        }
+
+        async function indexNow() {
+            const status = document.getElementById("folderStatus");
+            status.innerText = "Manual indexing started...";
+
+            try {
+                const response = await fetch("/index-now", {
+                    method: "POST"
+                });
+
+                const data = await response.json();
+                status.innerText = data.message;
+
+                setTimeout(loadDocuments, 3000);
+
+            } catch (error) {
+                status.innerText = "Manual indexing failed.";
+                console.error(error);
+            }
+        }
+
+        function toggleDocsPanel() {
+            docsCollapsed = !docsCollapsed;
+            document.getElementById("docsPanel").style.display = docsCollapsed ? "none" : "block";
+            document.getElementById("docsToggleBtn").innerText = docsCollapsed ? "Expand" : "Collapse";
+        }
 
         function getStatusIcon(status) {
             if (status === "ready") return "🟢";
@@ -338,18 +569,17 @@
             return (doc.indexing_status || "ready") === "ready";
         }
 
-        function hasProcessingDocuments() {
-            return documents.some(doc => {
-                const status = doc.indexing_status || "ready";
-                return status === "pending" || status === "indexing";
-            });
-        }
-
         async function loadDocuments() {
             try {
                 const response = await fetch("/documents");
-                const data = await response.json();
 
+                if (!response.ok) {
+                    document.getElementById("documentsList").innerHTML =
+                        "<p class='error'>Please login again.</p>";
+                    return;
+                }
+
+                const data = await response.json();
                 documents = data.documents || [];
 
                 const list = document.getElementById("documentsList");
@@ -357,7 +587,6 @@
 
                 if (documents.length === 0) {
                     list.innerHTML = "<p class='empty-state'>No documents indexed yet.</p>";
-                    stopAutoRefresh();
                     return;
                 }
 
@@ -378,7 +607,6 @@
 
                         <div class="doc-meta">
                             ID: ${doc.document_id}<br>
-                            Source: ${doc.source_type}<br>
                             Version: ${doc.version}<br>
                             Chunks: ${doc.chunks}
                         </div>
@@ -387,8 +615,9 @@
                             ${status.toUpperCase()}
                         </span>
 
-                        ${doc.error_message
-                            ? `<div class="error-text">Error: ${doc.error_message}</div>`
+                        ${
+                            doc.error_message
+                            ? `<div class="error">Error: ${doc.error_message}</div>`
                             : ""
                         }
                     `;
@@ -398,34 +627,17 @@
 
                 toggleAllDocuments();
 
-                if (hasProcessingDocuments()) {
-                    startAutoRefresh();
-                    document.getElementById("systemStatus").innerText = "Indexing in background...";
-                } else {
-                    stopAutoRefresh();
-                    document.getElementById("systemStatus").innerText = "Connected";
-                }
-
             } catch (error) {
                 console.error(error);
-                document.getElementById("documentsList").innerHTML =
-                    "<p class='error-text'>Failed to load documents.</p>";
             }
         }
 
-        function startAutoRefresh() {
+        function startDocumentAutoRefresh() {
             if (autoRefreshTimer) return;
 
             autoRefreshTimer = setInterval(async () => {
                 await loadDocuments();
-            }, 5000);
-        }
-
-        function stopAutoRefresh() {
-            if (autoRefreshTimer) {
-                clearInterval(autoRefreshTimer);
-                autoRefreshTimer = null;
-            }
+            }, 10000);
         }
 
         function toggleAllDocuments() {
@@ -449,9 +661,7 @@
         function getSelectedDocumentIds() {
             const selectAll = document.getElementById("selectAllDocs").checked;
 
-            if (selectAll) {
-                return [];
-            }
+            if (selectAll) return [];
 
             const selected = [];
 
@@ -471,7 +681,7 @@
             const selectedIds = getSelectedDocumentIds();
 
             if (!hasReadyDocuments()) {
-                addMessage("assistant", "No ready documents are available yet. Please wait until indexing is complete.");
+                addMessage("assistant", "No ready documents are available yet. Please index documents first.");
                 return false;
             }
 
@@ -498,19 +708,13 @@
                         messages.push(`${result.filename}: Updated file detected. Re-indexing started.`);
                     } else if (result.status === "already_processing") {
                         messages.push(`${result.filename}: Already processing.`);
-                    } else if (result.status === "unsupported") {
-                        messages.push(`${result.filename}: Unsupported file type.`);
                     } else {
                         messages.push(`${result.filename}: ${result.message || result.status}`);
                     }
                 });
             }
 
-            if (messages.length === 0) {
-                return data.message || "Upload completed.";
-            }
-
-            return messages.join("\n");
+            return messages.length ? messages.join("\n") : data.message;
         }
 
         async function uploadFiles() {
@@ -520,17 +724,6 @@
             if (input.files.length === 0) {
                 status.innerText = "Please select files first.";
                 return;
-            }
-
-            const allowedExtensions = ["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"];
-
-            for (let file of input.files) {
-                const extension = file.name.split(".").pop().toLowerCase();
-
-                if (!allowedExtensions.includes(extension)) {
-                    status.innerText = `Unsupported file type: ${file.name}`;
-                    return;
-                }
             }
 
             const formData = new FormData();
@@ -549,13 +742,10 @@
 
                 const data = await response.json();
 
-                console.log(data);
-
                 status.innerText = buildUploadStatusMessage(data);
                 input.value = "";
 
                 await loadDocuments();
-                startAutoRefresh();
 
             } catch (error) {
                 status.innerText = "Upload failed.";
@@ -569,7 +759,6 @@
             const question = input.value.trim();
 
             if (!question) return;
-
             if (!validateBeforeSend()) return;
 
             const selectedDocumentIds = getSelectedDocumentIds();
@@ -589,9 +778,7 @@
             try {
                 const response = await fetch("/chat", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
+                    headers: {"Content-Type": "application/json"},
                     body: JSON.stringify(payload)
                 });
 
@@ -648,16 +835,15 @@
             if (sources.length > 0) {
                 const sourcesBox = document.createElement("div");
                 sourcesBox.className = "sources-box";
-                sourcesBox.innerHTML = "<strong>Sources</strong>";
+                sourcesBox.innerHTML = "<strong>Sources used</strong>";
 
                 sources.forEach(source => {
-                    const card = document.createElement("div");
-                    card.className = "source-card";
-                    card.innerText =
-                        `${source.filename}\n` +
-                        `Document ID: ${source.document_id} | Chunk: ${source.chunk_number}\n` +
-                        `Retrieval: ${source.retrieval_type || "direct"} | Score: ${source.score}`;
-                    sourcesBox.appendChild(card);
+                    const link = document.createElement("a");
+                    link.className = "source-link";
+                    link.href = source.download_url;
+                    link.innerText = "⬇ " + source.filename;
+                    link.target = "_blank";
+                    sourcesBox.appendChild(link);
                 });
 
                 div.appendChild(sourcesBox);
@@ -691,12 +877,14 @@
             const chatBox = document.getElementById("chatBox");
             chatBox.innerHTML = "";
 
-            addMessage("assistant", "New chat started. Select ready documents and ask your question.");
+            addMessage("assistant", "New chat started. Select documents and ask your question.");
         }
 
         async function loadSessions() {
             try {
                 const response = await fetch("/sessions");
+                if (!response.ok) return;
+
                 const data = await response.json();
 
                 const list = document.getElementById("sessionsList");
@@ -717,8 +905,6 @@
 
             } catch (error) {
                 console.error(error);
-                document.getElementById("sessionsList").innerHTML =
-                    "<p class='error-text'>Failed to load sessions.</p>";
             }
         }
 
@@ -737,21 +923,13 @@
                 });
 
             } catch (error) {
-                console.error(error);
                 addMessage("assistant", "Failed to load this chat session.");
+                console.error(error);
             }
         }
 
-        window.onload = async function () {
-            await loadDocuments();
-            await loadSessions();
-
-            setInterval(async () => {
-                await loadDocuments();
-            }, 5000);
-        };
+        window.onload = checkLogin;
     </script>
 
 </body>
-
 </html>
