@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Response, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, Response, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import psycopg2
@@ -22,13 +22,27 @@ from pptx import Presentation
 app = FastAPI()
 
 
-DB_HOST = "localhost"
-DB_NAME = "kb_chatbot"
-DB_USER = "postgres"
-DB_PASSWORD = "Aanya2612"
+# ============================================================
+# DATABASE CONFIG
+# ============================================================
 
-CHAT_MODEL = "qwen2.5:7b"
-EMBEDDING_MODEL = "nomic-embed-text"
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_NAME = os.getenv("DB_NAME", "kb_chatbot")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "Aanya2612")
+
+
+# ============================================================
+# MODEL CONFIG
+# ============================================================
+
+CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2.5:7b")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+
+
+# ============================================================
+# APP CONFIG
+# ============================================================
 
 DEFAULT_KNOWLEDGE_BASE_FOLDER = "knowledge_base"
 KNOWLEDGE_BASE_FOLDER = DEFAULT_KNOWLEDGE_BASE_FOLDER
@@ -50,8 +64,36 @@ MAX_CONTEXT_CHUNKS_TOTAL = 14
 
 EMBEDDING_BATCH_SIZE = 32
 
+
+# ============================================================
+# AUTH CONFIG
+# ============================================================
+
+AUTH_MODE = os.getenv("AUTH_MODE", "local")
+# local   = demo mode using employees table
+# company = production mode using company employee verification API
+
+COMPANY_EMPLOYEE_VERIFY_URL = os.getenv(
+    "COMPANY_EMPLOYEE_VERIFY_URL",
+    ""
+)
+
+ALLOWED_EMPLOYEE_EMAIL_DOMAINS = [
+    "@motherson.com",
+    "@mtsl.com"
+]
+
+
+# ============================================================
+# GLOBAL LOCKS
+# ============================================================
+
 scan_lock = threading.Lock()
 
+
+# ============================================================
+# REQUEST MODELS
+# ============================================================
 
 class RetrieveRequest(BaseModel):
     question: str
@@ -73,6 +115,10 @@ class FolderRequest(BaseModel):
     folder_path: str
 
 
+# ============================================================
+# DATABASE HELPERS
+# ============================================================
+
 def get_db_connection():
     return psycopg2.connect(
         host=DB_HOST,
@@ -84,6 +130,86 @@ def get_db_connection():
 
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+# ============================================================
+# AUTH HELPERS
+# ============================================================
+
+def is_allowed_employee_email(email):
+    email = email.strip().lower()
+    return any(email.endswith(domain) for domain in ALLOWED_EMPLOYEE_EMAIL_DOMAINS)
+
+
+def verify_employee_locally(email, password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT employee_id, name, email, role, department
+        FROM employees
+        WHERE email = %s
+          AND password_hash = %s
+          AND is_active = TRUE
+        """,
+        (
+            email,
+            hash_password(password)
+        )
+    )
+
+    row = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "employee_id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "role": row[3],
+        "department": row[4]
+    }
+
+
+def verify_employee_from_company_system(email, password):
+    if not COMPANY_EMPLOYEE_VERIFY_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="Company employee verification API is not configured."
+        )
+
+    try:
+        response = requests.post(
+            COMPANY_EMPLOYEE_VERIFY_URL,
+            json={
+                "email": email,
+                "password": password
+            },
+            timeout=30
+        )
+    except Exception:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    data = response.json()
+
+    if not data.get("valid"):
+        return None
+
+    return {
+        "employee_id": data.get("employee_id"),
+        "name": data.get("name"),
+        "email": data.get("email"),
+        "role": data.get("role", "employee"),
+        "department": data.get("department")
+    }
 
 
 def get_session_token(request: Request):
@@ -101,11 +227,12 @@ def require_login(request: Request):
 
     cursor.execute(
         """
-        SELECT e.employee_id, e.name, e.email, e.role
+        SELECT e.employee_id, e.name, e.email, e.role, e.department
         FROM employee_sessions s
         JOIN employees e
         ON s.employee_id = e.employee_id
         WHERE s.session_token = %s
+          AND e.is_active = TRUE
         """,
         (token,)
     )
@@ -122,13 +249,127 @@ def require_login(request: Request):
         "employee_id": row[0],
         "name": row[1],
         "email": row[2],
-        "role": row[3]
+        "role": row[3],
+        "department": row[4]
     }
 
+
+# ============================================================
+# SCHEMA SETUP
+# ============================================================
 
 def ensure_schema_updates():
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            document_id SERIAL PRIMARY KEY,
+            original_filename TEXT NOT NULL,
+            file_path TEXT UNIQUE NOT NULL,
+            file_hash TEXT NOT NULL,
+            file_size BIGINT,
+            last_modified TIMESTAMP,
+            source_type TEXT DEFAULT 'knowledge_base',
+            version INTEGER DEFAULT 1,
+            indexing_status TEXT DEFAULT 'pending',
+            error_message TEXT,
+            chunk_count INTEGER DEFAULT 0,
+            indexed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS document_chunks (
+            chunk_id SERIAL PRIMARY KEY,
+            document_id INTEGER REFERENCES documents(document_id) ON DELETE CASCADE,
+            chunk_number INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            embedding vector(768),
+            token_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id SERIAL PRIMARY KEY,
+            title TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            message_id SERIAL PRIMARY KEY,
+            session_id INTEGER REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employees (
+            employee_id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL DEFAULT '',
+            role TEXT DEFAULT 'employee',
+            department TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_sessions (
+            session_id SERIAL PRIMARY KEY,
+            employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE,
+            session_token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_login_logs (
+            log_id SERIAL PRIMARY KEY,
+            employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE,
+            email TEXT NOT NULL,
+            login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            logout_time TIMESTAMP,
+            ip_address TEXT,
+            status TEXT DEFAULT 'active'
+        );
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
     cursor.execute(
         """
@@ -153,67 +394,49 @@ def ensure_schema_updates():
 
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS employees (
-            employee_id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'employee',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+        ALTER TABLE employees
+        ADD COLUMN IF NOT EXISTS department TEXT;
         """
     )
 
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS employee_sessions (
-            session_id SERIAL PRIMARY KEY,
-            employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE,
-            session_token TEXT UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+        ALTER TABLE employees
+        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
         """
     )
 
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS app_settings (
-            setting_key TEXT PRIMARY KEY,
-            setting_value TEXT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+        UPDATE employees
+        SET is_active = TRUE
+        WHERE is_active IS NULL;
         """
     )
 
     cursor.execute(
         """
-        SELECT employee_id
-        FROM employees
-        WHERE email = %s
+        INSERT INTO employees(name, email, password_hash, role, department, is_active)
+        VALUES (%s, %s, %s, %s, %s, TRUE)
+        ON CONFLICT(email) DO NOTHING;
         """,
-        ("admin@motherson.com",)
-    )
-
-    existing_admin = cursor.fetchone()
-
-    if not existing_admin:
-        cursor.execute(
-            """
-            INSERT INTO employees(name, email, password_hash, role)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (
-                "Admin",
-                "admin@motherson.com",
-                hash_password("admin123"),
-                "admin"
-            )
+        (
+            "Admin",
+            "admin@motherson.com",
+            hash_password("admin123"),
+            "admin",
+            "IT"
         )
+    )
 
     conn.commit()
     cursor.close()
     conn.close()
 
+
+# ============================================================
+# APP SETTINGS
+# ============================================================
 
 def get_setting(key, default_value=None):
     conn = get_db_connection()
@@ -264,7 +487,10 @@ def load_knowledge_folder_from_db():
     global KNOWLEDGE_BASE_FOLDER
     global UPLOAD_FOLDER
 
-    saved_folder = get_setting("knowledge_base_folder", DEFAULT_KNOWLEDGE_BASE_FOLDER)
+    saved_folder = get_setting(
+        "knowledge_base_folder",
+        DEFAULT_KNOWLEDGE_BASE_FOLDER
+    )
 
     KNOWLEDGE_BASE_FOLDER = saved_folder
     UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
@@ -273,6 +499,10 @@ def load_knowledge_folder_from_db():
 def ensure_folders():
     os.makedirs(KNOWLEDGE_BASE_FOLDER, exist_ok=True)
 
+
+# ============================================================
+# FILE HELPERS
+# ============================================================
 
 def calculate_file_hash(file_path):
     sha256 = hashlib.sha256()
@@ -314,6 +544,10 @@ def tokenize(text):
 
     return [word for word in text.split() if word not in stopwords]
 
+
+# ============================================================
+# TEXT EXTRACTION
+# ============================================================
 
 def extract_pdf(file_path):
     document = fitz.open(file_path)
@@ -379,7 +613,6 @@ def extract_csv(file_path):
 
     return text
 
-
 def extract_pptx(file_path):
     presentation = Presentation(file_path)
     text = ""
@@ -424,10 +657,24 @@ def extract_text(file_path):
 
 
 def is_supported_file(file_path):
-    supported_extensions = ["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"]
+    supported_extensions = [
+        "pdf",
+        "docx",
+        "xlsx",
+        "csv",
+        "pptx",
+        "txt",
+        "md"
+    ]
+
     extension = file_path.lower().split(".")[-1]
+
     return extension in supported_extensions
 
+
+# ============================================================
+# CHUNKING
+# ============================================================
 
 def recursive_split(text, separators):
     if len(text) <= MAX_CHUNK_SIZE:
@@ -440,6 +687,7 @@ def recursive_split(text, separators):
         ]
 
     separator = separators[0]
+
     parts = text.split(separator)
 
     if len(parts) == 1:
@@ -458,14 +706,19 @@ def recursive_split(text, separators):
 
         if len(candidate) <= MAX_CHUNK_SIZE:
             current = candidate
+
         else:
             if current:
-                chunks.extend(recursive_split(current, separators[1:]))
+                chunks.extend(
+                    recursive_split(current, separators[1:])
+                )
 
             current = part
 
     if current:
-        chunks.extend(recursive_split(current, separators[1:]))
+        chunks.extend(
+            recursive_split(current, separators[1:])
+        )
 
     return chunks
 
@@ -481,13 +734,17 @@ def add_overlap(chunks):
 
         if not final_chunks:
             final_chunks.append(chunk)
+
         else:
             previous = final_chunks[-1]
+
             overlap_text = previous[-CHUNK_OVERLAP:]
+
             combined = overlap_text + "\n" + chunk
 
             if len(combined) <= MAX_CHUNK_SIZE + CHUNK_OVERLAP:
                 final_chunks.append(combined.strip())
+
             else:
                 final_chunks.append(chunk)
 
@@ -513,9 +770,12 @@ def split_text_into_chunks(text):
     for chunk in raw_chunks:
         if len(chunk) <= MAX_CHUNK_SIZE:
             safe_chunks.append(chunk)
+
         else:
             for i in range(0, len(chunk), MAX_CHUNK_SIZE):
-                safe_chunks.append(chunk[i:i + MAX_CHUNK_SIZE])
+                safe_chunks.append(
+                    chunk[i:i + MAX_CHUNK_SIZE]
+                )
 
     final_chunks = add_overlap(safe_chunks)
 
@@ -525,6 +785,10 @@ def split_text_into_chunks(text):
         if len(chunk.strip()) > 30
     ]
 
+
+# ============================================================
+# EMBEDDINGS
+# ============================================================
 
 def generate_embedding(text):
     response = requests.post(
@@ -537,7 +801,6 @@ def generate_embedding(text):
     )
 
     if response.status_code != 200:
-        print("Embedding failed")
         print(response.text)
         raise Exception("Embedding API failed")
 
@@ -565,31 +828,43 @@ def generate_embeddings_batch(texts):
                 return data["embeddings"]
 
     except Exception as error:
-        print("Batch embedding failed, falling back to single embeddings.")
+        print("Batch embedding failed.")
         print(error)
 
     embeddings = []
 
     for text in texts:
-        embeddings.append(generate_embedding(text))
+        embeddings.append(
+            generate_embedding(text)
+        )
 
     return embeddings
 
 
-def update_document_status(document_id, status, error_message=None, chunk_count=None):
+# ============================================================
+# DOCUMENT STATUS
+# ============================================================
+
+def update_document_status(
+        document_id,
+        status,
+        error_message=None,
+        chunk_count=None):
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
     if status == "ready":
+
         cursor.execute(
             """
             UPDATE documents
-            SET indexing_status = %s,
-                error_message = %s,
-                chunk_count = %s,
-                indexed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE document_id = %s
+            SET indexing_status=%s,
+                error_message=%s,
+                chunk_count=%s,
+                indexed_at=CURRENT_TIMESTAMP,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE document_id=%s
             """,
             (
                 status,
@@ -598,15 +873,17 @@ def update_document_status(document_id, status, error_message=None, chunk_count=
                 document_id
             )
         )
+
     else:
+
         cursor.execute(
             """
             UPDATE documents
-            SET indexing_status = %s,
-                error_message = %s,
-                chunk_count = COALESCE(%s, chunk_count),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE document_id = %s
+            SET indexing_status=%s,
+                error_message=%s,
+                chunk_count=COALESCE(%s,chunk_count),
+                updated_at=CURRENT_TIMESTAMP
+            WHERE document_id=%s
             """,
             (
                 status,
@@ -621,10 +898,21 @@ def update_document_status(document_id, status, error_message=None, chunk_count=
     conn.close()
 
 
-def queue_file_for_indexing(file_path, source_type, force_reindex=False):
+# ============================================================
+# DOCUMENT QUEUE
+# ============================================================
+
+def queue_file_for_indexing(
+        file_path,
+        source_type,
+        force_reindex=False):
+
     absolute_path = os.path.abspath(file_path)
+
     original_filename = os.path.basename(file_path)
+
     metadata = get_file_metadata(file_path)
+
     file_hash = calculate_file_hash(file_path)
 
     conn = get_db_connection()
@@ -632,9 +920,14 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
 
     cursor.execute(
         """
-        SELECT document_id, file_hash, file_size, version, indexing_status
+        SELECT
+            document_id,
+            file_hash,
+            file_size,
+            version,
+            indexing_status
         FROM documents
-        WHERE file_path = %s
+        WHERE file_path=%s
         """,
         (absolute_path,)
     )
@@ -642,7 +935,14 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
     existing_by_path = cursor.fetchone()
 
     if existing_by_path:
-        document_id, old_hash, old_size, old_version, old_status = existing_by_path
+
+        (
+            document_id,
+            old_hash,
+            old_size,
+            old_version,
+            old_status
+        ) = existing_by_path
 
         unchanged = (
             old_hash == file_hash
@@ -650,6 +950,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
         )
 
         if unchanged and old_status == "ready" and not force_reindex:
+
             cursor.close()
             conn.close()
 
@@ -657,11 +958,12 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
                 "filename": original_filename,
                 "document_id": document_id,
                 "status": "skipped_unchanged",
-                "message": "File already indexed and unchanged.",
+                "message": "File already indexed.",
                 "scheduled": False
             }
 
-        if old_status in ["pending", "indexing"] and not force_reindex:
+        if old_status in ["pending", "indexing"]:
+
             cursor.close()
             conn.close()
 
@@ -669,28 +971,28 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
                 "filename": original_filename,
                 "document_id": document_id,
                 "status": "already_processing",
-                "message": "File is already being indexed.",
+                "message": "Already processing.",
                 "scheduled": False
             }
 
         new_version = old_version
 
         if old_hash != file_hash or force_reindex:
-            new_version = old_version + 1
+            new_version += 1
 
         cursor.execute(
             """
             UPDATE documents
-            SET file_hash = %s,
-                file_size = %s,
-                last_modified = %s,
-                version = %s,
-                source_type = %s,
-                indexing_status = 'pending',
-                error_message = NULL,
-                chunk_count = 0,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE document_id = %s
+            SET file_hash=%s,
+                file_size=%s,
+                last_modified=%s,
+                version=%s,
+                source_type=%s,
+                indexing_status='pending',
+                error_message=NULL,
+                chunk_count=0,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE document_id=%s
             """,
             (
                 file_hash,
@@ -710,7 +1012,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
             "filename": original_filename,
             "document_id": document_id,
             "status": "queued_for_reindexing",
-            "message": "Updated file detected. Re-indexing started.",
+            "message": "Re-indexing started.",
             "scheduled": True
         }
 
@@ -718,7 +1020,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
         """
         SELECT document_id
         FROM documents
-        WHERE file_hash = %s
+        WHERE file_hash=%s
         """,
         (file_hash,)
     )
@@ -726,6 +1028,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
     existing_by_hash = cursor.fetchone()
 
     if existing_by_hash and not force_reindex:
+
         cursor.close()
         conn.close()
 
@@ -733,7 +1036,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
             "filename": original_filename,
             "document_id": existing_by_hash[0],
             "status": "skipped_duplicate",
-            "message": "This file already exists in the knowledge base.",
+            "message": "File already exists.",
             "scheduled": False
         }
 
@@ -748,10 +1051,10 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
             last_modified,
             source_type,
             indexing_status,
-            error_message,
             chunk_count
         )
-        VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL, 0)
+        VALUES
+        (%s,%s,%s,%s,%s,%s,'pending',0)
         RETURNING document_id
         """,
         (
@@ -767,6 +1070,7 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
     document_id = cursor.fetchone()[0]
 
     conn.commit()
+
     cursor.close()
     conn.close()
 
@@ -774,10 +1078,13 @@ def queue_file_for_indexing(file_path, source_type, force_reindex=False):
         "filename": original_filename,
         "document_id": document_id,
         "status": "queued_new_document",
-        "message": "New file queued for background indexing.",
+        "message": "Queued successfully.",
         "scheduled": True
     }
 
+# ============================================================
+# DOCUMENT INDEXING
+# ============================================================
 
 def process_document_indexing(document_id, file_path):
     print("\n" + "=" * 80)
@@ -787,10 +1094,22 @@ def process_document_indexing(document_id, file_path):
     print("File:", file_path)
 
     try:
-        update_document_status(document_id, "indexing", None, 0)
+        if not os.path.exists(file_path):
+            raise FileNotFoundError("File not found on server.")
+
+        update_document_status(
+            document_id=document_id,
+            status="indexing",
+            error_message=None,
+            chunk_count=0
+        )
 
         extracted_text = extract_text(file_path)
+
         chunks = split_text_into_chunks(extracted_text)
+
+        print("Characters extracted:", len(extracted_text))
+        print("Chunks created:", len(chunks))
 
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -798,7 +1117,7 @@ def process_document_indexing(document_id, file_path):
         cursor.execute(
             """
             DELETE FROM document_chunks
-            WHERE document_id = %s
+            WHERE document_id=%s
             """,
             (document_id,)
         )
@@ -806,14 +1125,28 @@ def process_document_indexing(document_id, file_path):
         inserted_count = 0
 
         for batch_start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
-            batch_chunks = chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+
+            batch_chunks = chunks[
+                batch_start:batch_start + EMBEDDING_BATCH_SIZE
+            ]
+
+            print(
+                "Embedding batch",
+                batch_start + 1,
+                "to",
+                batch_start + len(batch_chunks),
+                "of",
+                len(chunks)
+            )
 
             embeddings = generate_embeddings_batch(batch_chunks)
 
             rows = []
 
             for index, chunk in enumerate(batch_chunks):
+
                 chunk_number = batch_start + index + 1
+
                 embedding = embeddings[index]
 
                 rows.append(
@@ -830,52 +1163,122 @@ def process_document_indexing(document_id, file_path):
                 cursor,
                 """
                 INSERT INTO document_chunks
-                (document_id, chunk_number, content, embedding, token_count)
+                (
+                    document_id,
+                    chunk_number,
+                    content,
+                    embedding,
+                    token_count
+                )
                 VALUES %s
                 """,
                 rows,
-                template="(%s, %s, %s, %s::vector, %s)"
+                template="(%s,%s,%s,%s::vector,%s)"
             )
 
             conn.commit()
+
             inserted_count += len(rows)
 
         cursor.close()
         conn.close()
 
-        update_document_status(document_id, "ready", None, inserted_count)
+        update_document_status(
+            document_id=document_id,
+            status="ready",
+            error_message=None,
+            chunk_count=inserted_count
+        )
 
-        print("BACKGROUND INDEXING COMPLETED")
+        print("\nBACKGROUND INDEXING COMPLETED")
         print("Document ID:", document_id)
         print("Chunks inserted:", inserted_count)
 
     except Exception as error:
+
         error_text = str(error)
 
-        print("BACKGROUND INDEXING FAILED")
+        print("\nBACKGROUND INDEXING FAILED")
         print("Document ID:", document_id)
         print(error_text)
 
-        update_document_status(document_id, "failed", error_text, 0)
+        update_document_status(
+            document_id=document_id,
+            status="failed",
+            error_message=error_text,
+            chunk_count=0
+        )
 
+# ============================================================
+# DELETED FILE CLEANUP
+# ============================================================
+
+def cleanup_deleted_files():
+    print("\nChecking deleted files...")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT document_id, file_path
+        FROM documents
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    deleted_count = 0
+
+    for document_id, file_path in rows:
+
+        if not os.path.exists(file_path):
+
+            print("Removing deleted file:", file_path)
+
+            cursor.execute(
+                """
+                DELETE FROM documents
+                WHERE document_id=%s
+                """,
+                (document_id,)
+            )
+
+            deleted_count += 1
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    print("Deleted documents removed:", deleted_count)
+
+
+# ============================================================
+# KNOWLEDGE BASE SCAN
+# ============================================================
 
 def scan_knowledge_base_once(force_reindex=False):
+
     if scan_lock.locked():
-        print("Scan already running. Skipping this cycle.")
+        print("Scan already running.")
         return []
 
     results = []
 
     with scan_lock:
+
         ensure_folders()
 
-        print("\n" + "=" * 80)
-        print("SCANNING KNOWLEDGE BASE FOLDER")
-        print("=" * 80)
-        print("Folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+        cleanup_deleted_files()
+
+        print("\nSCANNING KNOWLEDGE BASE")
+        print(os.path.abspath(KNOWLEDGE_BASE_FOLDER))
 
         for root, dirs, files in os.walk(KNOWLEDGE_BASE_FOLDER):
+
             for filename in files:
+
                 file_path = os.path.join(root, filename)
 
                 if not is_supported_file(file_path):
@@ -888,9 +1291,11 @@ def scan_knowledge_base_once(force_reindex=False):
                 )
 
                 results.append(result)
+
                 print(result)
 
-                if result.get("scheduled"):
+                if result["scheduled"]:
+
                     process_document_indexing(
                         result["document_id"],
                         os.path.abspath(file_path)
@@ -899,19 +1304,72 @@ def scan_knowledge_base_once(force_reindex=False):
     return results
 
 
+# ============================================================
+# HOURLY WATCHER
+# ============================================================
+
 def hourly_knowledge_base_watcher():
-    print("\nHourly knowledge base watcher started.")
-    print("Watching folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+
+    print("\nHourly watcher started")
+    print(
+        "Folder:",
+        os.path.abspath(KNOWLEDGE_BASE_FOLDER)
+    )
 
     while True:
+
         time.sleep(AUTO_SCAN_INTERVAL_SECONDS)
 
         try:
+
+            print("\nRunning automatic hourly scan...")
+
             scan_knowledge_base_once(False)
+
         except Exception as error:
-            print("Hourly watcher error:")
+
+            print("Hourly watcher error")
             print(error)
 
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+@app.on_event("startup")
+def startup_event():
+
+    ensure_schema_updates()
+
+    load_knowledge_folder_from_db()
+
+    ensure_folders()
+
+    print("\n" + "=" * 80)
+    print("KB CHATBOT STARTED")
+    print("=" * 80)
+
+    print(
+        "Knowledge folder:",
+        os.path.abspath(KNOWLEDGE_BASE_FOLDER)
+    )
+
+    print(
+        "Automatic scan interval:",
+        AUTO_SCAN_INTERVAL_SECONDS,
+        "seconds"
+    )
+
+    watcher_thread = threading.Thread(
+        target=hourly_knowledge_base_watcher,
+        daemon=True
+    )
+
+    watcher_thread.start()
+
+# ============================================================
+# RETRIEVAL HELPERS
+# ============================================================
 
 def get_ready_document_ids():
     conn = get_db_connection()
@@ -921,7 +1379,7 @@ def get_ready_document_ids():
         """
         SELECT document_id
         FROM documents
-        WHERE indexing_status = 'ready'
+        WHERE indexing_status='ready'
         ORDER BY updated_at DESC
         """
     )
@@ -939,17 +1397,24 @@ def build_document_filter(document_ids):
         return "", []
 
     placeholders = ",".join(["%s"] * len(document_ids))
+
     return f" AND c.document_id IN ({placeholders}) ", document_ids
 
 
-def get_vector_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_VECTOR_TOP_K):
+def get_vector_rows(
+        cursor,
+        question,
+        document_ids=None,
+        limit=PER_DOCUMENT_VECTOR_TOP_K):
+
     question_embedding = generate_embedding(question)
+
     document_ids = document_ids or []
 
     filter_sql, filter_params = build_document_filter(document_ids)
 
     query = f"""
-        SELECT 
+        SELECT
             c.chunk_id,
             c.document_id,
             d.original_filename,
@@ -958,8 +1423,8 @@ def get_vector_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_VECT
             c.embedding <=> %s::vector AS distance
         FROM document_chunks c
         JOIN documents d
-        ON c.document_id = d.document_id
-        WHERE d.indexing_status = 'ready'
+        ON c.document_id=d.document_id
+        WHERE d.indexing_status='ready'
         {filter_sql}
         ORDER BY c.embedding <=> %s::vector
         LIMIT %s
@@ -976,24 +1441,33 @@ def get_vector_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_VECT
     return cursor.fetchall()
 
 
-def get_keyword_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_KEYWORD_TOP_K):
+def get_keyword_rows(
+        cursor,
+        question,
+        document_ids=None,
+        limit=PER_DOCUMENT_KEYWORD_TOP_K):
+
     keywords = tokenize(question)
+
     document_ids = document_ids or []
 
     if not keywords:
         return []
 
     keyword_conditions = []
+
     params = []
 
     for keyword in keywords:
         keyword_conditions.append("c.content ILIKE %s")
         params.append("%" + keyword + "%")
 
-    document_filter_sql, document_filter_params = build_document_filter(document_ids)
+    document_filter_sql, document_filter_params = build_document_filter(
+        document_ids
+    )
 
     query = f"""
-        SELECT 
+        SELECT
             c.chunk_id,
             c.document_id,
             d.original_filename,
@@ -1002,18 +1476,14 @@ def get_keyword_rows(cursor, question, document_ids=None, limit=PER_DOCUMENT_KEY
             1.0 AS distance
         FROM document_chunks c
         JOIN documents d
-        ON c.document_id = d.document_id
-        WHERE d.indexing_status = 'ready'
+        ON c.document_id=d.document_id
+        WHERE d.indexing_status='ready'
         AND ({" OR ".join(keyword_conditions)})
         {document_filter_sql}
         LIMIT %s
     """
 
-    params = (
-        params
-        + document_filter_params
-        + [limit]
-    )
+    params = params + document_filter_params + [limit]
 
     cursor.execute(query, params)
 
@@ -1043,6 +1513,7 @@ def merge_retrieval_results(vector_rows, keyword_rows):
 
         if chunk_id in merged:
             merged[chunk_id]["from_keyword"] = True
+
         else:
             merged[chunk_id] = {
                 "chunk_id": row[0],
@@ -1061,12 +1532,19 @@ def merge_retrieval_results(vector_rows, keyword_rows):
 
 def rerank_chunks(chunks, question):
     question_words = set(tokenize(question))
+
     reranked = []
 
     for chunk in chunks:
-        content_words = set(tokenize(chunk["content"]))
 
-        keyword_hits = len(question_words.intersection(content_words))
+        content_words = set(
+            tokenize(chunk["content"])
+        )
+
+        keyword_hits = len(
+            question_words.intersection(content_words)
+        )
+
         vector_score = 1 / (1 + chunk["vector_distance"])
 
         source_bonus = 0
@@ -1082,7 +1560,12 @@ def rerank_chunks(chunks, question):
         if question.lower().strip() in chunk["content"].lower():
             exact_phrase_bonus = 3.0
 
-        final_score = keyword_hits + vector_score + source_bonus + exact_phrase_bonus
+        final_score = (
+            keyword_hits
+            + vector_score
+            + source_bonus
+            + exact_phrase_bonus
+        )
 
         chunk["keyword_hits"] = keyword_hits
         chunk["vector_score"] = vector_score
@@ -1090,7 +1573,10 @@ def rerank_chunks(chunks, question):
 
         reranked.append(chunk)
 
-    reranked.sort(key=lambda item: item["final_score"], reverse=True)
+    reranked.sort(
+        key=lambda item: item["final_score"],
+        reverse=True
+    )
 
     return reranked
 
@@ -1099,15 +1585,21 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
     neighbor_map = {}
 
     for chunk in ranked_chunks:
+
         document_id = chunk["document_id"]
+
         center_chunk_number = chunk["chunk_number"]
 
-        start_chunk = max(1, center_chunk_number - NEIGHBOR_WINDOW)
+        start_chunk = max(
+            1,
+            center_chunk_number - NEIGHBOR_WINDOW
+        )
+
         end_chunk = center_chunk_number + NEIGHBOR_WINDOW
 
         cursor.execute(
             """
-            SELECT 
+            SELECT
                 c.chunk_id,
                 c.document_id,
                 d.original_filename,
@@ -1115,10 +1607,10 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
                 c.content
             FROM document_chunks c
             JOIN documents d
-            ON c.document_id = d.document_id
-            WHERE c.document_id = %s
+            ON c.document_id=d.document_id
+            WHERE c.document_id=%s
               AND c.chunk_number BETWEEN %s AND %s
-              AND d.indexing_status = 'ready'
+              AND d.indexing_status='ready'
             ORDER BY c.chunk_number ASC
             """,
             (
@@ -1131,9 +1623,11 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
         rows = cursor.fetchall()
 
         for row in rows:
+
             chunk_id = row[0]
 
             if chunk_id not in neighbor_map:
+
                 neighbor_map[chunk_id] = {
                     "chunk_id": row[0],
                     "document_id": row[1],
@@ -1152,9 +1646,17 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
     return list(neighbor_map.values())
 
 
-def build_context_chunks_for_document(cursor, ranked_chunks, dynamic_limit):
+def build_context_chunks_for_document(
+        cursor,
+        ranked_chunks,
+        dynamic_limit):
+
     direct_chunks = ranked_chunks[:PER_DOCUMENT_DIRECT_TOP_K]
-    neighbor_chunks = fetch_neighbor_chunks(cursor, direct_chunks)
+
+    neighbor_chunks = fetch_neighbor_chunks(
+        cursor,
+        direct_chunks
+    )
 
     combined = {}
 
@@ -1178,6 +1680,7 @@ def retrieve_relevant_chunks(question, document_ids=None):
 
     if requested_document_ids:
         target_document_ids = requested_document_ids
+
     else:
         target_document_ids = get_ready_document_ids()
 
@@ -1190,13 +1693,15 @@ def retrieve_relevant_chunks(question, document_ids=None):
         3,
         min(
             PER_DOCUMENT_CONTEXT_LIMIT,
-            MAX_CONTEXT_CHUNKS_TOTAL // max(1, len(target_document_ids))
+            MAX_CONTEXT_CHUNKS_TOTAL
+            // max(1, len(target_document_ids))
         )
     )
 
     final_chunks = []
 
     for document_id in target_document_ids:
+
         vector_rows = get_vector_rows(
             cursor,
             question,
@@ -1211,8 +1716,15 @@ def retrieve_relevant_chunks(question, document_ids=None):
             PER_DOCUMENT_KEYWORD_TOP_K
         )
 
-        merged_chunks = merge_retrieval_results(vector_rows, keyword_rows)
-        ranked_chunks = rerank_chunks(merged_chunks, question)
+        merged_chunks = merge_retrieval_results(
+            vector_rows,
+            keyword_rows
+        )
+
+        ranked_chunks = rerank_chunks(
+            merged_chunks,
+            question
+        )
 
         if not ranked_chunks:
             continue
@@ -1231,6 +1743,10 @@ def retrieve_relevant_chunks(question, document_ids=None):
     return final_chunks[:MAX_CONTEXT_CHUNKS_TOTAL]
 
 
+# ============================================================
+# SESSION HELPERS
+# ============================================================
+
 def create_session_if_needed(session_id, first_question):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1238,6 +1754,7 @@ def create_session_if_needed(session_id, first_question):
     if session_id is not None:
         cursor.close()
         conn.close()
+
         return session_id
 
     title = first_question[:60]
@@ -1254,6 +1771,7 @@ def create_session_if_needed(session_id, first_question):
     new_session_id = cursor.fetchone()[0]
 
     conn.commit()
+
     cursor.close()
     conn.close()
 
@@ -1267,7 +1785,7 @@ def save_message(session_id, role, message):
     cursor.execute(
         """
         INSERT INTO chat_messages(session_id, role, message)
-        VALUES (%s, %s, %s)
+        VALUES (%s,%s,%s)
         """,
         (
             session_id,
@@ -1277,14 +1795,20 @@ def save_message(session_id, role, message):
     )
 
     conn.commit()
+
     cursor.close()
     conn.close()
 
+
+# ============================================================
+# ANSWER GENERATION
+# ============================================================
 
 def generate_answer(question, chunks):
     context_parts = []
 
     for index, chunk in enumerate(chunks, start=1):
+
         context_parts.append(
             f"Source {index}\n"
             f"Document ID: {chunk['document_id']}\n"
@@ -1293,7 +1817,9 @@ def generate_answer(question, chunks):
             f"Content:\n{chunk['content']}"
         )
 
-    context = "\n\n-------------------------\n\n".join(context_parts)
+    context = "\n\n-------------------------\n\n".join(
+        context_parts
+    )
 
     system_prompt = """
 You are a strict enterprise knowledge-base assistant.
@@ -1346,28 +1872,14 @@ Give the final answer only.
 
     if response.status_code != 200:
         print(response.text)
+
         raise Exception("Chat model failed")
 
     return response.json()["message"]["content"].strip()
 
-
-@app.on_event("startup")
-def startup_event():
-    ensure_schema_updates()
-    load_knowledge_folder_from_db()
-    ensure_folders()
-
-    print("\nKB Chatbot backend started.")
-    print("Knowledge base folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
-    print("Hourly indexing enabled. Manual indexing also available.")
-
-    watcher_thread = threading.Thread(
-        target=hourly_knowledge_base_watcher,
-        daemon=True
-    )
-
-    watcher_thread.start()
-
+# ============================================================
+# ROUTES: UI + AUTH
+# ============================================================
 
 @app.get("/")
 def home():
@@ -1375,44 +1887,134 @@ def home():
 
 
 @app.post("/login")
-def login(request: LoginRequest, response: Response):
+def login(
+        request: LoginRequest,
+        response: Response,
+        http_request: Request):
+
+    email = request.email.strip().lower()
+
+    if not is_allowed_employee_email(email):
+        raise HTTPException(
+            status_code=403,
+            detail="Only approved Motherson employees can login."
+        )
+
+    if AUTH_MODE == "company":
+        employee = verify_employee_from_company_system(
+            email,
+            request.password
+        )
+
+    else:
+        employee = verify_employee_locally(
+            email,
+            request.password
+        )
+
+    if not employee:
+        raise HTTPException(
+            status_code=401,
+            detail="Employee not found or password is incorrect."
+        )
+
+    session_token = str(uuid.uuid4())
+
+    ip_address = (
+        http_request.client.host
+        if http_request.client
+        else None
+    )
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        SELECT employee_id, name, email, role
-        FROM employees
-        WHERE email = %s
-          AND password_hash = %s
+        INSERT INTO employees
+        (
+            name,
+            email,
+            password_hash,
+            role,
+            department,
+            is_active
+        )
+        VALUES (%s,%s,%s,%s,%s,TRUE)
+        ON CONFLICT(email)
+        DO UPDATE SET
+            name=EXCLUDED.name,
+            role=EXCLUDED.role,
+            department=EXCLUDED.department,
+            is_active=TRUE
+        RETURNING employee_id
         """,
         (
-            request.email.strip().lower(),
-            hash_password(request.password)
+            employee["name"],
+            employee["email"],
+            "" if AUTH_MODE == "company" else hash_password(request.password),
+            employee.get("role", "employee"),
+            employee.get("department")
         )
     )
 
-    row = cursor.fetchone()
+    employee_id = cursor.fetchone()[0]
 
-    if not row:
-        cursor.close()
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    session_token = str(uuid.uuid4())
+    # One active session per employee.
+    cursor.execute(
+        """
+        DELETE FROM employee_sessions
+        WHERE employee_id=%s
+        """,
+        (employee_id,)
+    )
 
     cursor.execute(
         """
-        INSERT INTO employee_sessions(employee_id, session_token)
-        VALUES (%s, %s)
+        UPDATE employee_login_logs
+        SET logout_time=CURRENT_TIMESTAMP,
+            status='logged_out'
+        WHERE employee_id=%s
+          AND logout_time IS NULL
+        """,
+        (employee_id,)
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO employee_sessions
+        (
+            employee_id,
+            session_token
+        )
+        VALUES (%s,%s)
         """,
         (
-            row[0],
+            employee_id,
             session_token
         )
     )
 
+    cursor.execute(
+        """
+        INSERT INTO employee_login_logs
+        (
+            employee_id,
+            email,
+            ip_address,
+            status
+        )
+        VALUES (%s,%s,%s,'active')
+        """,
+        (
+            employee_id,
+            employee["email"],
+            ip_address
+        )
+    )
+
     conn.commit()
+
     cursor.close()
     conn.close()
 
@@ -1423,34 +2025,64 @@ def login(request: LoginRequest, response: Response):
         samesite="lax"
     )
 
+    employee["employee_id"] = employee_id
+
     return {
         "message": "Login successful",
-        "employee": {
-            "employee_id": row[0],
-            "name": row[1],
-            "email": row[2],
-            "role": row[3]
-        }
+        "employee": employee
     }
 
 
 @app.post("/logout")
 def logout(request: Request, response: Response):
+
     token = get_session_token(request)
 
     if token:
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute(
             """
+            SELECT e.employee_id, e.email
+            FROM employee_sessions s
+            JOIN employees e
+            ON s.employee_id=e.employee_id
+            WHERE s.session_token=%s
+            """,
+            (token,)
+        )
+
+        row = cursor.fetchone()
+
+        if row:
+
+            cursor.execute(
+                """
+                UPDATE employee_login_logs
+                SET logout_time=CURRENT_TIMESTAMP,
+                    status='logged_out'
+                WHERE employee_id=%s
+                  AND email=%s
+                  AND logout_time IS NULL
+                """,
+                (
+                    row[0],
+                    row[1]
+                )
+            )
+
+        cursor.execute(
+            """
             DELETE FROM employee_sessions
-            WHERE session_token = %s
+            WHERE session_token=%s
             """,
             (token,)
         )
 
         conn.commit()
+
         cursor.close()
         conn.close()
 
@@ -1463,6 +2095,7 @@ def logout(request: Request, response: Response):
 
 @app.get("/me")
 def me(request: Request):
+
     employee = require_login(request)
 
     return {
@@ -1472,13 +2105,19 @@ def me(request: Request):
 
 @app.get("/health")
 def health_check():
+
     return {
         "status": "Backend is running"
     }
 
 
+# ============================================================
+# ROUTES: FOLDER + INDEXING
+# ============================================================
+
 @app.get("/knowledge-folder")
 def get_knowledge_folder(request: Request):
+
     require_login(request)
 
     return {
@@ -1487,7 +2126,10 @@ def get_knowledge_folder(request: Request):
 
 
 @app.post("/set-knowledge-folder")
-def set_knowledge_folder(request: FolderRequest, http_request: Request):
+def set_knowledge_folder(
+        request: FolderRequest,
+        http_request: Request):
+
     require_login(http_request)
 
     global KNOWLEDGE_BASE_FOLDER
@@ -1496,6 +2138,7 @@ def set_knowledge_folder(request: FolderRequest, http_request: Request):
     folder_path = request.folder_path.strip()
 
     if not os.path.isdir(folder_path):
+
         return {
             "success": False,
             "message": "Folder path does not exist.",
@@ -1503,9 +2146,14 @@ def set_knowledge_folder(request: FolderRequest, http_request: Request):
         }
 
     KNOWLEDGE_BASE_FOLDER = folder_path
+
     UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
 
-    set_setting("knowledge_base_folder", folder_path)
+    set_setting(
+        "knowledge_base_folder",
+        folder_path
+    )
+
     ensure_folders()
 
     return {
@@ -1516,10 +2164,17 @@ def set_knowledge_folder(request: FolderRequest, http_request: Request):
 
 
 @app.post("/index-now")
-def index_now(request: Request, background_tasks: BackgroundTasks, force: bool = False):
+def index_now(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        force: bool = False):
+
     require_login(request)
 
-    background_tasks.add_task(scan_knowledge_base_once, force)
+    background_tasks.add_task(
+        scan_knowledge_base_once,
+        force
+    )
 
     return {
         "message": "Manual indexing started in background.",
@@ -1527,63 +2182,9 @@ def index_now(request: Request, background_tasks: BackgroundTasks, force: bool =
     }
 
 
-@app.post("/upload")
-async def upload_documents(request: Request, background_tasks: BackgroundTasks):
-    require_login(request)
-    ensure_folders()
+@app.get("/index-status")
+def index_status(request: Request):
 
-    form = await request.form()
-    uploaded_files = form.getlist("files")
-
-    results = []
-
-    if not uploaded_files:
-        return {
-            "message": "No files received.",
-            "results": []
-        }
-
-    for file in uploaded_files:
-        safe_filename = os.path.basename(file.filename)
-        save_path = os.path.join(UPLOAD_FOLDER, safe_filename)
-
-        with open(save_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        if not is_supported_file(save_path):
-            results.append(
-                {
-                    "filename": safe_filename,
-                    "status": "unsupported",
-                    "message": "Unsupported file type.",
-                    "scheduled": False
-                }
-            )
-            continue
-
-        result = queue_file_for_indexing(
-            file_path=save_path,
-            source_type="knowledge_base",
-            force_reindex=False
-        )
-
-        results.append(result)
-
-        if result.get("scheduled"):
-            background_tasks.add_task(
-                process_document_indexing,
-                result["document_id"],
-                os.path.abspath(save_path)
-            )
-
-    return {
-        "message": "Upload completed.",
-        "results": results
-    }
-
-
-@app.get("/documents")
-def list_documents(request: Request):
     require_login(request)
 
     conn = get_db_connection()
@@ -1591,34 +2192,9 @@ def list_documents(request: Request):
 
     cursor.execute(
         """
-        SELECT 
-            d.document_id,
-            d.original_filename,
-            d.source_type,
-            d.version,
-            d.indexing_status,
-            d.error_message,
-            CASE 
-                WHEN d.chunk_count IS NULL OR d.chunk_count = 0
-                THEN COUNT(c.chunk_id)
-                ELSE d.chunk_count
-            END AS chunks,
-            d.indexed_at,
-            d.updated_at
-        FROM documents d
-        LEFT JOIN document_chunks c
-        ON d.document_id = c.document_id
-        GROUP BY 
-            d.document_id,
-            d.original_filename,
-            d.source_type,
-            d.version,
-            d.indexing_status,
-            d.error_message,
-            d.chunk_count,
-            d.indexed_at,
-            d.updated_at
-        ORDER BY d.updated_at DESC;
+        SELECT indexing_status, COUNT(*)
+        FROM documents
+        GROUP BY indexing_status
         """
     )
 
@@ -1627,26 +2203,180 @@ def list_documents(request: Request):
     cursor.close()
     conn.close()
 
+    counts = {
+        "pending": 0,
+        "indexing": 0,
+        "ready": 0,
+        "failed": 0
+    }
+
+    for status, count in rows:
+        counts[status or "ready"] = count
+
+    running = (
+        counts["pending"] > 0
+        or counts["indexing"] > 0
+    )
+
     return {
-        "documents": [
-            {
-                "document_id": row[0],
-                "filename": row[1],
-                "source_type": row[2],
-                "version": row[3],
-                "indexing_status": row[4],
-                "error_message": row[5],
-                "chunks": row[6],
-                "indexed_at": str(row[7]),
-                "updated_at": str(row[8])
-            }
-            for row in rows
-        ]
+        "running": running,
+        "completed": not running,
+        "pending": counts["pending"],
+        "indexing": counts["indexing"],
+        "ready": counts["ready"],
+        "failed": counts["failed"]
+    }
+    
+# ============================================================
+# ROUTES: UPLOAD
+# ============================================================
+
+@app.post("/upload")
+async def upload_files(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        files: list[UploadFile] = File(...)):
+
+    require_login(request)
+
+    ensure_folders()
+
+    results = []
+
+    if not files:
+        return {
+            "message": "No files received.",
+            "results": []
+        }
+
+    for file in files:
+
+        filename = os.path.basename(file.filename)
+
+        if not filename:
+            results.append(
+                {
+                    "filename": "unknown",
+                    "status": "invalid",
+                    "message": "Invalid filename.",
+                    "scheduled": False
+                }
+            )
+            continue
+
+        if not is_supported_file(filename):
+            results.append(
+                {
+                    "filename": filename,
+                    "status": "unsupported",
+                    "message": "Unsupported file type.",
+                    "scheduled": False
+                }
+            )
+            continue
+
+        final_path = os.path.join(
+            KNOWLEDGE_BASE_FOLDER,
+            filename
+        )
+
+        temp_filename = f".uploading_{uuid.uuid4().hex}_{filename}"
+
+        temp_path = os.path.join(
+            KNOWLEDGE_BASE_FOLDER,
+            temp_filename
+        )
+
+        try:
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(
+                    file.file,
+                    buffer
+                )
+
+            uploaded_hash = calculate_file_hash(temp_path)
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT document_id, original_filename, indexing_status
+                FROM documents
+                WHERE file_hash=%s
+                """,
+                (uploaded_hash,)
+            )
+
+            existing_duplicate = cursor.fetchone()
+
+            cursor.close()
+            conn.close()
+
+            if existing_duplicate:
+                os.remove(temp_path)
+
+                results.append(
+                    {
+                        "filename": filename,
+                        "document_id": existing_duplicate[0],
+                        "status": "skipped_duplicate",
+                        "message": "This file already exists in the knowledge base.",
+                        "scheduled": False
+                    }
+                )
+                continue
+
+            if os.path.exists(final_path):
+                os.remove(final_path)
+
+            shutil.move(
+                temp_path,
+                final_path
+            )
+
+            result = queue_file_for_indexing(
+                file_path=final_path,
+                source_type="uploaded",
+                force_reindex=False
+            )
+
+            results.append(result)
+
+            if result["scheduled"]:
+
+                background_tasks.add_task(
+                    process_document_indexing,
+                    result["document_id"],
+                    os.path.abspath(final_path)
+                )
+
+        except Exception as error:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            results.append(
+                {
+                    "filename": filename,
+                    "status": "failed",
+                    "message": str(error),
+                    "scheduled": False
+                }
+            )
+
+    return {
+        "message": "Upload completed.",
+        "results": results
     }
 
 
-@app.get("/download-document/{document_id}")
-def download_document(document_id: int, request: Request):
+# ============================================================
+# ROUTES: DOCUMENTS
+# ============================================================
+
+@app.get("/documents")
+def get_documents(request: Request):
+
     require_login(request)
 
     conn = get_db_connection()
@@ -1654,9 +2384,64 @@ def download_document(document_id: int, request: Request):
 
     cursor.execute(
         """
-        SELECT original_filename, file_path
+        SELECT
+            document_id,
+            original_filename,
+            version,
+            indexing_status,
+            chunk_count,
+            error_message
         FROM documents
-        WHERE document_id = %s
+        ORDER BY updated_at DESC
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    documents = []
+
+    for row in rows:
+
+        documents.append(
+            {
+                "document_id": row[0],
+                "filename": row[1],
+                "version": row[2],
+                "indexing_status": row[3],
+                "chunks": row[4],
+                "error_message": row[5]
+            }
+        )
+
+    return {
+        "documents": documents
+    }
+
+
+# ============================================================
+# ROUTES: DOWNLOAD DOCUMENT
+# ============================================================
+
+@app.get("/download-document/{document_id}")
+def download_document(
+        document_id: int,
+        request: Request):
+
+    require_login(request)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            original_filename,
+            file_path
+        FROM documents
+        WHERE document_id=%s
         """,
         (document_id,)
     )
@@ -1667,22 +2452,33 @@ def download_document(document_id: int, request: Request):
     conn.close()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found."
+        )
 
-    filename, file_path = row
+    filename = row[0]
+    file_path = row[1]
 
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found on server")
+        raise HTTPException(
+            status_code=404,
+            detail="File missing on disk."
+        )
 
     return FileResponse(
-        file_path,
-        filename=filename,
-        media_type="application/octet-stream"
+        path=file_path,
+        filename=filename
     )
-
+# ============================================================
+# ROUTES: RETRIEVE
+# ============================================================
 
 @app.post("/retrieve")
-def retrieve(request_data: RetrieveRequest, request: Request):
+def retrieve(
+        request_data: RetrieveRequest,
+        request: Request):
+
     require_login(request)
 
     chunks = retrieve_relevant_chunks(
@@ -1693,7 +2489,11 @@ def retrieve(request_data: RetrieveRequest, request: Request):
     return {
         "question": request_data.question,
         "document_ids": request_data.document_ids,
-        "search_scope": "selected_documents" if request_data.document_ids else "all_ready_documents",
+        "search_scope": (
+            "selected_documents"
+            if request_data.document_ids
+            else "all_ready_documents"
+        ),
         "chunks": [
             {
                 "rank": index + 1,
@@ -1712,8 +2512,15 @@ def retrieve(request_data: RetrieveRequest, request: Request):
     }
 
 
+# ============================================================
+# ROUTES: CHAT
+# ============================================================
+
 @app.post("/chat")
-def chat(request_data: ChatRequest, request: Request):
+def chat(
+        request_data: ChatRequest,
+        request: Request):
+
     require_login(request)
 
     session_id = create_session_if_needed(
@@ -1721,7 +2528,11 @@ def chat(request_data: ChatRequest, request: Request):
         request_data.question
     )
 
-    save_message(session_id, "user", request_data.question)
+    save_message(
+        session_id,
+        "user",
+        request_data.question
+    )
 
     chunks = retrieve_relevant_chunks(
         request_data.question,
@@ -1729,8 +2540,17 @@ def chat(request_data: ChatRequest, request: Request):
     )
 
     if not chunks:
-        answer = "No ready and relevant knowledge base content was found for the selected document scope."
-        save_message(session_id, "assistant", answer)
+
+        answer = (
+            "No ready and relevant knowledge base content was found "
+            "for the selected document scope."
+        )
+
+        save_message(
+            session_id,
+            "assistant",
+            answer
+        )
 
         return {
             "session_id": session_id,
@@ -1738,30 +2558,48 @@ def chat(request_data: ChatRequest, request: Request):
             "sources": []
         }
 
-    answer = generate_answer(request_data.question, chunks)
+    answer = generate_answer(
+        request_data.question,
+        chunks
+    )
 
-    save_message(session_id, "assistant", answer)
+    save_message(
+        session_id,
+        "assistant",
+        answer
+    )
 
     unique_sources = {}
 
     for chunk in chunks:
+
         unique_sources[chunk["document_id"]] = {
             "document_id": chunk["document_id"],
             "filename": chunk["filename"],
-            "download_url": f"/download-document/{chunk['document_id']}"
+            "download_url": (
+                f"/download-document/{chunk['document_id']}"
+            )
         }
 
     return {
         "session_id": session_id,
         "answer": answer,
-        "search_scope": "selected_documents" if request_data.document_ids else "all_ready_documents",
+        "search_scope": (
+            "selected_documents"
+            if request_data.document_ids
+            else "all_ready_documents"
+        ),
         "document_ids": request_data.document_ids,
         "sources": list(unique_sources.values())
     }
 
+# ============================================================
+# ROUTES: SESSIONS
+# ============================================================
 
 @app.get("/sessions")
 def get_sessions(request: Request):
+
     require_login(request)
 
     conn = get_db_connection()
@@ -1769,9 +2607,12 @@ def get_sessions(request: Request):
 
     cursor.execute(
         """
-        SELECT session_id, title, created_at
+        SELECT
+            session_id,
+            title,
+            created_at
         FROM chat_sessions
-        ORDER BY created_at DESC;
+        ORDER BY created_at DESC
         """
     )
 
@@ -1780,20 +2621,32 @@ def get_sessions(request: Request):
     cursor.close()
     conn.close()
 
-    return {
-        "sessions": [
+    sessions = []
+
+    for row in rows:
+
+        sessions.append(
             {
                 "session_id": row[0],
                 "title": row[1],
                 "created_at": str(row[2])
             }
-            for row in rows
-        ]
+        )
+
+    return {
+        "sessions": sessions
     }
 
 
+# ============================================================
+# ROUTES: SESSION MESSAGES
+# ============================================================
+
 @app.get("/sessions/{session_id}/messages")
-def get_session_messages(session_id: int, request: Request):
+def get_session_messages(
+        session_id: int,
+        request: Request):
+
     require_login(request)
 
     conn = get_db_connection()
@@ -1801,10 +2654,13 @@ def get_session_messages(session_id: int, request: Request):
 
     cursor.execute(
         """
-        SELECT role, message, created_at
+        SELECT
+            role,
+            message,
+            created_at
         FROM chat_messages
-        WHERE session_id = %s
-        ORDER BY created_at ASC;
+        WHERE session_id=%s
+        ORDER BY created_at ASC
         """,
         (session_id,)
     )
@@ -1814,13 +2670,34 @@ def get_session_messages(session_id: int, request: Request):
     cursor.close()
     conn.close()
 
-    return {
-        "messages": [
+    messages = []
+
+    for row in rows:
+
+        messages.append(
             {
                 "role": row[0],
                 "message": row[1],
                 "created_at": str(row[2])
             }
-            for row in rows
-        ]
-    } 
+        )
+
+    return {
+        "messages": messages
+    }
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    import uvicorn
+
+    uvicorn.run(
+        "kb_server:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Motherson Knowledge Assistant</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,9 +13,9 @@
 
         body {
             margin: 0;
-            background: #f8f9fb;
-            color: #1f2937;
             height: 100vh;
+            background: #ffffff;
+            color: #111827;
         }
 
         .login-page {
@@ -22,48 +23,56 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            background: linear-gradient(135deg, #b91c1c, #ffffff);
+            background: #f8f8f8;
         }
 
         .login-card {
-            width: 380px;
-            background: white;
-            padding: 30px;
+            width: 390px;
+            background: #ffffff;
+            padding: 32px;
             border-radius: 18px;
-            box-shadow: 0 20px 45px rgba(0,0,0,0.18);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+            border-top: 6px solid #d71920;
         }
 
-        .login-card h1 {
-            color: #b91c1c;
-            margin-bottom: 5px;
+        .login-logo {
+            font-size: 30px;
+            font-weight: bold;
+            color: #d71920;
+            margin-bottom: 6px;
         }
 
-        .login-card p {
+        .login-subtitle {
             color: #6b7280;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
+            font-size: 14px;
         }
 
         input {
             width: 100%;
-            padding: 12px;
+            padding: 12px 14px;
             border: 1px solid #d1d5db;
             border-radius: 10px;
-            margin-top: 8px;
-            margin-bottom: 12px;
             outline: none;
+            font-size: 14px;
+        }
+
+        input:focus {
+            border-color: #d71920;
         }
 
         button {
-            background: #b91c1c;
+            background: #d71920;
             color: white;
             border: none;
             padding: 10px 14px;
-            border-radius: 9px;
+            border-radius: 10px;
             cursor: pointer;
+            font-size: 14px;
         }
 
         button:hover {
-            background: #991b1b;
+            background: #b9151b;
         }
 
         button:disabled {
@@ -77,49 +86,79 @@
         }
 
         .sidebar {
-            width: 350px;
-            background: white;
+            width: 330px;
+            background: #f7f7f8;
             border-right: 1px solid #e5e7eb;
-            padding: 18px;
-            overflow-y: auto;
-        }
-
-        .main {
-            flex: 1;
             display: flex;
             flex-direction: column;
             height: 100vh;
         }
 
-        .topbar {
-            background: white;
-            border-bottom: 1px solid #e5e7eb;
-            padding: 14px 22px;
+        .sidebar-main {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px;
+        }
+
+        .brand-box {
+            padding: 12px 8px 16px 8px;
+        }
+
+        .brand-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #d71920;
+        }
+
+        .brand-subtitle {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 3px;
+        }
+
+        .new-chat-btn {
+            width: 100%;
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #d1d5db;
+            text-align: left;
+            margin-bottom: 12px;
+        }
+
+        .new-chat-btn:hover {
+            background: #fef2f2;
+            border-color: #d71920;
+        }
+
+        .section {
+            margin-bottom: 10px;
+        }
+
+        .section-header {
+            width: 100%;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-
-        .brand {
-            font-size: 20px;
+            padding: 10px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #374151;
             font-weight: bold;
-            color: #b91c1c;
+            font-size: 14px;
         }
 
-        .user-info {
-            font-size: 13px;
-            color: #4b5563;
+        .section-header:hover {
+            background: #eeeeef;
         }
 
-        h2, h3 {
-            margin-top: 0;
-            color: #111827;
+        .section-content {
+            padding: 8px;
+            display: block;
         }
 
         .small-btn {
             width: 100%;
             margin-top: 8px;
-            margin-bottom: 8px;
         }
 
         .secondary-btn {
@@ -130,68 +169,45 @@
             background: #1f2937;
         }
 
-        .danger-btn {
-            background: #dc2626;
-        }
-
-        .folder-box, .search-box, .section-box {
-            background: #f9fafb;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-
-        .status {
-            font-size: 13px;
-            color: #6b7280;
-            white-space: pre-wrap;
-            line-height: 1.4;
-        }
-
-        .error {
-            color: #dc2626;
-            font-size: 13px;
-        }
-
-        .success {
-            color: #15803d;
-            font-size: 13px;
-        }
-
-        .doc-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .collapse-btn {
-            width: auto;
-            padding: 6px 10px;
+        .status-text {
             font-size: 12px;
-            background: #ef4444;
+            color: #6b7280;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            margin-top: 8px;
         }
 
-        .doc-item, .session-item {
+        .error-text {
+            color: #dc2626;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .success-text {
+            color: #15803d;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .search-docs {
+            margin-bottom: 8px;
+        }
+
+        .doc-item {
             background: #ffffff;
             border: 1px solid #e5e7eb;
-            border-left: 4px solid #b91c1c;
+            border-radius: 12px;
             padding: 10px;
-            border-radius: 10px;
             margin-bottom: 8px;
-            font-size: 14px;
         }
 
-        .session-item {
-            cursor: pointer;
-        }
-
-        .session-item:hover {
-            background: #fef2f2;
+        .doc-item:hover {
+            border-color: #d71920;
         }
 
         .doc-name {
             font-weight: bold;
+            font-size: 14px;
             word-break: break-word;
         }
 
@@ -207,8 +223,8 @@
             padding: 3px 8px;
             border-radius: 999px;
             font-size: 11px;
-            margin-top: 6px;
             font-weight: bold;
+            margin-top: 6px;
         }
 
         .ready {
@@ -231,64 +247,147 @@
             color: #991b1b;
         }
 
+        .session-item {
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #374151;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-item:hover {
+            background: #eeeeef;
+        }
+
+        .profile-box {
+            border-top: 1px solid #e5e7eb;
+            padding: 12px;
+            background: #ffffff;
+        }
+
+        .profile-card {
+            padding: 10px;
+            border-radius: 12px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+        }
+
+        .profile-name {
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .profile-email {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 3px;
+            word-break: break-word;
+        }
+
+        .logout-btn {
+            width: 100%;
+            margin-top: 8px;
+            background: #ffffff;
+            color: #d71920;
+            border: 1px solid #d71920;
+        }
+
+        .logout-btn:hover {
+            background: #fef2f2;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #ffffff;
+        }
+
+        .topbar {
+            height: 58px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 22px;
+            background: #ffffff;
+        }
+
+        .topbar-title {
+            font-weight: bold;
+            color: #111827;
+        }
+
+        .topbar-status {
+            font-size: 13px;
+            color: #6b7280;
+        }
+
         .chat-box {
             flex: 1;
             overflow-y: auto;
-            padding: 24px;
-            background: #f8f9fb;
+            padding: 28px;
+            background: #ffffff;
+        }
+
+        .message-wrap {
+            max-width: 850px;
+            margin: 0 auto 26px auto;
+        }
+
+        .role-label {
+            font-size: 13px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #374151;
         }
 
         .message {
-            max-width: 78%;
-            padding: 14px;
+            padding: 16px;
             border-radius: 14px;
-            margin-bottom: 14px;
-            line-height: 1.55;
+            line-height: 1.6;
             white-space: pre-wrap;
             word-wrap: break-word;
         }
 
-        .user {
-            background: #b91c1c;
-            color: white;
-            margin-left: auto;
+        .user-message {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
         }
 
-        .assistant {
-            background: white;
+        .assistant-message {
+            background: #ffffff;
             border: 1px solid #e5e7eb;
-            margin-right: auto;
-            color: #111827;
         }
 
         .typing {
-            opacity: 0.7;
+            color: #6b7280;
             font-style: italic;
         }
 
-        .input-area {
-            display: flex;
-            gap: 10px;
-            padding: 16px;
-            background: white;
-            border-top: 1px solid #e5e7eb;
-        }
-
-        .input-area input {
-            margin: 0;
-        }
-
         .sources-box {
-            margin-top: 12px;
+            margin-top: 14px;
+            padding-top: 12px;
             border-top: 1px solid #e5e7eb;
-            padding-top: 10px;
+        }
+
+        .sources-title {
             font-size: 13px;
+            font-weight: bold;
+            color: #374151;
+            margin-bottom: 8px;
         }
 
         .source-link {
             display: block;
-            color: #b91c1c;
+            color: #d71920;
             text-decoration: none;
+            font-size: 13px;
             margin-top: 6px;
             font-weight: bold;
         }
@@ -298,132 +397,282 @@
         }
 
         .copy-btn {
-            background: #374151;
+            margin-top: 10px;
+            background: #f3f4f6;
+            color: #374151;
+            border: 1px solid #d1d5db;
             font-size: 12px;
             padding: 6px 10px;
-            margin-top: 8px;
         }
 
-        hr {
-            border: 0;
+        .copy-btn:hover {
+            background: #e5e7eb;
+        }
+
+        .input-area {
+            padding: 18px 28px;
             border-top: 1px solid #e5e7eb;
-            margin: 18px 0;
+            background: #ffffff;
+        }
+
+        .input-shell {
+            max-width: 850px;
+            margin: 0 auto;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            border: 1px solid #d1d5db;
+            border-radius: 16px;
+            padding: 8px;
+            background: #ffffff;
+        }
+
+        .input-shell input {
+            border: none;
+            margin: 0;
+            flex: 1;
+            padding: 10px;
+        }
+
+        .input-shell input:focus {
+            border: none;
+        }
+
+        .send-btn {
+            border-radius: 12px;
+            padding: 10px 16px;
         }
 
         .empty-state {
-            color: #6b7280;
             font-size: 13px;
+            color: #6b7280;
+            padding: 8px;
+        }
+
+        .toast-container {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 9999;
+        }
+
+        .toast {
+            background: #ffffff;
+            color: #111827;
+            border-left: 5px solid #d71920;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            min-width: 260px;
+            font-size: 14px;
+        }
+
+        .toast.success {
+            border-left-color: #16a34a;
+        }
+
+        .toast.warning {
+            border-left-color: #f59e0b;
+        }
+
+        .toast.error {
+            border-left-color: #dc2626;
+        }
+
+        label {
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .checkbox-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .checkbox-row input {
+            width: auto;
+        }
+
+        .doc-item input {
+            width: auto;
+            margin-right: 6px;
         }
     </style>
 </head>
 
 <body>
 
+    <div class="toast-container" id="toastContainer"></div>
+
     <div class="login-page" id="loginPage">
         <div class="login-card">
-            <h1>Motherson</h1>
-            <p>Enterprise Knowledge Assistant</p>
+            <div class="login-logo">motherson</div>
+            <div class="login-subtitle">Enterprise Knowledge Assistant</div>
 
-            <label>Email</label>
+            <label>Employee Email</label>
             <input type="email" id="loginEmail" placeholder="admin@motherson.com">
 
             <label>Password</label>
-            <input type="password" id="loginPassword" placeholder="Password">
+            <input type="password" id="loginPassword" placeholder="Password" onkeydown="loginEnter(event)">
 
-            <button class="small-btn" onclick="login()">Login</button>
+            <button class="small-btn" onclick="login()">Sign in</button>
 
-            <div id="loginStatus" class="error"></div>
-
-            <p style="font-size:12px;color:#6b7280;margin-top:14px;">
-                Default: admin@motherson.com / admin123
-            </p>
+            <div id="loginStatus" class="error-text"></div>
         </div>
     </div>
 
     <div class="app" id="appPage">
+
         <div class="sidebar">
-            <h2>Motherson KB</h2>
+            <div class="sidebar-main">
 
-            <button class="small-btn" onclick="newChat()">+ New Chat</button>
-            <button class="small-btn danger-btn" onclick="logout()">Logout</button>
-
-            <hr>
-
-            <h3>Knowledge Folder</h3>
-            <div class="folder-box">
-                <input type="text" id="folderInput" placeholder="Paste folder path here">
-                <button class="small-btn" onclick="setKnowledgeFolder()">Save Folder</button>
-                <button class="small-btn secondary-btn" onclick="indexNow()">Index Now</button>
-                <div id="folderStatus" class="status"></div>
-            </div>
-
-            <hr>
-
-            <h3>Upload Documents</h3>
-            <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
-            <button class="small-btn" onclick="uploadFiles()">Upload</button>
-            <div id="uploadStatus" class="status"></div>
-
-            <hr>
-
-            <div class="doc-header">
-                <h3>Documents</h3>
-                <button class="collapse-btn" onclick="toggleDocsPanel()" id="docsToggleBtn">Collapse</button>
-            </div>
-
-            <div id="docsPanel">
-                <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh Documents</button>
-
-                <div class="search-box">
-                    <label>
-                        <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
-                        Search all ready documents
-                    </label>
+                <div class="brand-box">
+                    <div class="brand-title">motherson</div>
+                    <div class="brand-subtitle">Knowledge Assistant</div>
                 </div>
 
-                <div id="documentsList"></div>
+                <button class="new-chat-btn" onclick="newChat()">＋ New Chat</button>
+
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection('documentsSection', 'documentsArrow')">
+                        <span><span id="documentsArrow">▼</span> Documents</span>
+                        <span id="documentCount">0</span>
+                    </div>
+
+                    <div class="section-content" id="documentsSection">
+                        <input class="search-docs" type="text" id="docSearchInput" placeholder="Search documents..."
+                            oninput="renderDocuments()">
+
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()">
+                            <label for="selectAllDocs">Search all ready documents</label>
+                        </div>
+
+                        <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh</button>
+
+                        <div id="documentsList"></div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection('uploadSection', 'uploadArrow')">
+                        <span><span id="uploadArrow">▶</span> Upload Files</span>
+                    </div>
+
+                    <div class="section-content" id="uploadSection" style="display:none;">
+                        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
+                        <button class="small-btn" onclick="uploadFiles()">Upload</button>
+                        <div id="uploadStatus" class="status-text"></div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection('folderSection', 'folderArrow')">
+                        <span><span id="folderArrow">▶</span> Knowledge Folder</span>
+                    </div>
+
+                    <div class="section-content" id="folderSection" style="display:none;">
+                        <input type="text" id="folderInput" placeholder="Paste backend folder path">
+                        <button class="small-btn" onclick="setKnowledgeFolder()">Save Folder</button>
+                        <button class="small-btn secondary-btn" onclick="indexNow()">Index Now</button>
+                        <div id="folderStatus" class="status-text"></div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection('sessionsSection', 'sessionsArrow')">
+                        <span><span id="sessionsArrow">▼</span> Chat History</span>
+                    </div>
+
+                    <div class="section-content" id="sessionsSection">
+                        <div id="sessionsList"></div>
+                    </div>
+                </div>
+
             </div>
 
-            <hr>
-
-            <h3>Chat History</h3>
-            <button class="small-btn secondary-btn" onclick="loadSessions()">Refresh History</button>
-            <div id="sessionsList"></div>
+            <div class="profile-box">
+                <div class="profile-card">
+                    <div class="profile-name" id="profileName">Employee</div>
+                    <div class="profile-email" id="profileEmail">employee@motherson.com</div>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
         </div>
 
         <div class="main">
             <div class="topbar">
-                <div class="brand">Enterprise Knowledge Assistant</div>
-                <div class="user-info" id="userInfo">Logged in</div>
+                <div class="topbar-title">Motherson Knowledge Assistant</div>
+                <div class="topbar-status" id="systemStatus">Connected</div>
             </div>
 
             <div class="chat-box" id="chatBox">
-                <div class="message assistant">
-Hi! Select ready documents or search all ready documents, then ask a question.
+                <div class="message-wrap">
+                    <div class="role-label">Assistant</div>
+                    <div class="message assistant-message">
+                        Hi! Select ready documents or enable "Search all ready documents", then ask your question.
+                    </div>
                 </div>
             </div>
 
             <div class="input-area">
-                <input type="text" id="questionInput" placeholder="Ask a question..." onkeydown="handleEnter(event)">
-                <button id="sendBtn" onclick="sendMessage()">Send</button>
+                <div class="input-shell">
+                    <input type="text" id="questionInput" placeholder="Ask a question..."
+                        onkeydown="handleEnter(event)">
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+                </div>
             </div>
         </div>
+
     </div>
 
     <script>
         let currentSessionId = null;
         let documents = [];
-        let autoRefreshTimer = null;
-        let docsCollapsed = false;
+        let employee = null;
+        let documentRefreshTimer = null;
+        let indexStatusTimer = null;
+        let wasIndexing = false;
+
+        function showToast(message, type = "success") {
+            const container = document.getElementById("toastContainer");
+            const toast = document.createElement("div");
+
+            toast.className = "toast " + type;
+            toast.innerText = message;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 4000);
+        }
+
+        function loginEnter(event) {
+            if (event.key === "Enter") {
+                login();
+            }
+        }
 
         async function checkLogin() {
             try {
                 const response = await fetch("/me");
-                if (!response.ok) throw new Error("Not logged in");
+
+                if (!response.ok) {
+                    showLogin();
+                    return;
+                }
 
                 const data = await response.json();
-                showApp(data.employee);
-            } catch {
+                employee = data.employee;
+
+                showApp();
+
+            } catch (error) {
                 showLogin();
             }
         }
@@ -433,17 +682,18 @@ Hi! Select ready documents or search all ready documents, then ask a question.
             document.getElementById("appPage").style.display = "none";
         }
 
-        async function showApp(employee) {
+        async function showApp() {
             document.getElementById("loginPage").style.display = "none";
             document.getElementById("appPage").style.display = "flex";
-            document.getElementById("userInfo").innerText =
-                `${employee.name} | ${employee.role}`;
+
+            document.getElementById("profileName").innerText = employee.name || "Employee";
+            document.getElementById("profileEmail").innerText = employee.email || "";
 
             await loadKnowledgeFolder();
             await loadDocuments();
             await loadSessions();
 
-            startDocumentAutoRefresh();
+            startAutoRefresh();
         }
 
         async function login() {
@@ -453,20 +703,34 @@ Hi! Select ready documents or search all ready documents, then ask a question.
 
             status.innerText = "";
 
+            if (!email || !password) {
+                status.innerText = "Please enter email and password.";
+                return;
+            }
+
             try {
                 const response = await fetch("/login", {
                     method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({email, password})
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password
+                    })
                 });
 
                 if (!response.ok) {
-                    status.innerText = "Invalid email or password.";
+                    const error = await response.json();
+                    status.innerText = error.detail || "Login failed.";
                     return;
                 }
 
                 const data = await response.json();
-                showApp(data.employee);
+                employee = data.employee;
+
+                showToast("Login successful", "success");
+                showApp();
 
             } catch (error) {
                 status.innerText = "Login failed.";
@@ -475,21 +739,46 @@ Hi! Select ready documents or search all ready documents, then ask a question.
         }
 
         async function logout() {
-            await fetch("/logout", {method: "POST"});
+            try {
+                await fetch("/logout", {
+                    method: "POST"
+                });
+            } catch { }
+
+            employee = null;
             currentSessionId = null;
+
+            stopAutoRefresh();
             showLogin();
+        }
+
+        function toggleSection(sectionId, arrowId) {
+            const section = document.getElementById(sectionId);
+            const arrow = document.getElementById(arrowId);
+
+            if (section.style.display === "none") {
+                section.style.display = "block";
+                arrow.innerText = "▼";
+            } else {
+                section.style.display = "none";
+                arrow.innerText = "▶";
+            }
         }
 
         async function loadKnowledgeFolder() {
             try {
                 const response = await fetch("/knowledge-folder");
+
+                if (!response.ok) return;
+
                 const data = await response.json();
 
                 document.getElementById("folderInput").value = data.folder_path || "";
                 document.getElementById("folderStatus").innerText =
                     "Current folder: " + (data.folder_path || "Not set");
+
             } catch (error) {
-                document.getElementById("folderStatus").innerText = "Could not load folder.";
+                console.error(error);
             }
         }
 
@@ -498,15 +787,19 @@ Hi! Select ready documents or search all ready documents, then ask a question.
             const status = document.getElementById("folderStatus");
 
             if (!folderPath) {
-                status.innerText = "Please enter a folder path.";
+                status.innerText = "Please enter folder path.";
                 return;
             }
 
             try {
                 const response = await fetch("/set-knowledge-folder", {
                     method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({folder_path: folderPath})
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        folder_path: folderPath
+                    })
                 });
 
                 const data = await response.json();
@@ -514,18 +807,24 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 status.innerText = data.message;
 
                 if (data.success) {
+                    showToast("Knowledge folder saved", "success");
                     await loadDocuments();
+                } else {
+                    showToast(data.message, "error");
                 }
 
             } catch (error) {
                 status.innerText = "Failed to save folder.";
-                console.error(error);
+                showToast("Failed to save folder", "error");
             }
         }
 
         async function indexNow() {
             const status = document.getElementById("folderStatus");
+
             status.innerText = "Manual indexing started...";
+            wasIndexing = true;
+            document.getElementById("systemStatus").innerText = "Indexing...";
 
             try {
                 const response = await fetch("/index-now", {
@@ -533,28 +832,147 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 });
 
                 const data = await response.json();
-                status.innerText = data.message;
 
-                setTimeout(loadDocuments, 3000);
+                status.innerText = data.message;
+                showToast("Indexing started", "success");
+
+                startIndexStatusPolling();
 
             } catch (error) {
-                status.innerText = "Manual indexing failed.";
+                status.innerText = "Failed to start indexing.";
+                showToast("Failed to start indexing", "error");
+            }
+        }
+
+        async function checkIndexStatus() {
+            try {
+                const response = await fetch("/index-status");
+
+                if (!response.ok) return;
+
+                const data = await response.json();
+
+                if (data.running) {
+                    wasIndexing = true;
+                    document.getElementById("systemStatus").innerText =
+                        `Indexing... Pending: ${data.pending}, Running: ${data.indexing}`;
+                } else {
+                    document.getElementById("systemStatus").innerText = "Connected";
+
+                    if (wasIndexing) {
+                        showToast("Indexing completed. Documents are ready.", "success");
+                        wasIndexing = false;
+                        await loadDocuments();
+                    }
+                }
+
+            } catch (error) {
                 console.error(error);
             }
         }
 
-        function toggleDocsPanel() {
-            docsCollapsed = !docsCollapsed;
-            document.getElementById("docsPanel").style.display = docsCollapsed ? "none" : "block";
-            document.getElementById("docsToggleBtn").innerText = docsCollapsed ? "Expand" : "Collapse";
+        function startIndexStatusPolling() {
+            if (indexStatusTimer) return;
+
+            indexStatusTimer = setInterval(checkIndexStatus, 5000);
+        }
+
+        function startAutoRefresh() {
+            if (!documentRefreshTimer) {
+                documentRefreshTimer = setInterval(loadDocuments, 10000);
+            }
+
+            startIndexStatusPolling();
+        }
+
+        function stopAutoRefresh() {
+            if (documentRefreshTimer) {
+                clearInterval(documentRefreshTimer);
+                documentRefreshTimer = null;
+            }
+
+            if (indexStatusTimer) {
+                clearInterval(indexStatusTimer);
+                indexStatusTimer = null;
+            }
+        }
+
+        async function loadDocuments() {
+            try {
+                const response = await fetch("/documents");
+
+                if (!response.ok) return;
+
+                const data = await response.json();
+                documents = data.documents || [];
+
+                document.getElementById("documentCount").innerText = documents.length;
+
+                renderDocuments();
+
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        function renderDocuments() {
+            const list = document.getElementById("documentsList");
+            const search = document.getElementById("docSearchInput").value.toLowerCase();
+
+            list.innerHTML = "";
+
+            const filteredDocs = documents.filter(doc =>
+                doc.filename.toLowerCase().includes(search)
+            );
+
+            if (filteredDocs.length === 0) {
+                list.innerHTML = "<div class='empty-state'>No documents found.</div>";
+                return;
+            }
+
+            filteredDocs.forEach(doc => {
+                const status = doc.indexing_status || "ready";
+                const disabled = status === "ready" ? "" : "disabled";
+                const statusClass = getStatusClass(status);
+                const icon = getStatusIcon(status);
+
+                const div = document.createElement("div");
+                div.className = "doc-item";
+
+                div.innerHTML = `
+                    <label>
+                        <input type="checkbox" class="doc-check" value="${doc.document_id}" ${disabled}>
+                        <span class="doc-name">${icon} ${doc.filename}</span>
+                    </label>
+
+                    <div class="doc-meta">
+                        ID: ${doc.document_id}<br>
+                        Version: ${doc.version}<br>
+                        Chunks: ${doc.chunks}
+                    </div>
+
+                    <span class="status-pill ${statusClass}">
+                        ${status.toUpperCase()}
+                    </span>
+
+                    ${doc.error_message
+                        ? `<div class="error-text">Error: ${doc.error_message}</div>`
+                        : ""
+                    }
+                `;
+
+                list.appendChild(div);
+            });
+
+            toggleAllDocuments();
         }
 
         function getStatusIcon(status) {
-            if (status === "ready") return "🟢";
-            if (status === "indexing") return "🟡";
-            if (status === "pending") return "🔵";
-            if (status === "failed") return "🔴";
-            return "⚪";
+            if (status === "ready") return "●";
+            if (status === "indexing") return "●";
+            if (status === "pending") return "●";
+            if (status === "failed") return "●";
+            return "●";
         }
 
         function getStatusClass(status) {
@@ -567,77 +985,6 @@ Hi! Select ready documents or search all ready documents, then ask a question.
 
         function isReady(doc) {
             return (doc.indexing_status || "ready") === "ready";
-        }
-
-        async function loadDocuments() {
-            try {
-                const response = await fetch("/documents");
-
-                if (!response.ok) {
-                    document.getElementById("documentsList").innerHTML =
-                        "<p class='error'>Please login again.</p>";
-                    return;
-                }
-
-                const data = await response.json();
-                documents = data.documents || [];
-
-                const list = document.getElementById("documentsList");
-                list.innerHTML = "";
-
-                if (documents.length === 0) {
-                    list.innerHTML = "<p class='empty-state'>No documents indexed yet.</p>";
-                    return;
-                }
-
-                documents.forEach(doc => {
-                    const status = doc.indexing_status || "ready";
-                    const statusIcon = getStatusIcon(status);
-                    const statusClass = getStatusClass(status);
-                    const disabled = isReady(doc) ? "" : "disabled";
-
-                    const div = document.createElement("div");
-                    div.className = "doc-item";
-
-                    div.innerHTML = `
-                        <label>
-                            <input type="checkbox" class="doc-check" value="${doc.document_id}" ${disabled}>
-                            <span class="doc-name">${statusIcon} ${doc.filename}</span>
-                        </label>
-
-                        <div class="doc-meta">
-                            ID: ${doc.document_id}<br>
-                            Version: ${doc.version}<br>
-                            Chunks: ${doc.chunks}
-                        </div>
-
-                        <span class="status-pill ${statusClass}">
-                            ${status.toUpperCase()}
-                        </span>
-
-                        ${
-                            doc.error_message
-                            ? `<div class="error">Error: ${doc.error_message}</div>`
-                            : ""
-                        }
-                    `;
-
-                    list.appendChild(div);
-                });
-
-                toggleAllDocuments();
-
-            } catch (error) {
-                console.error(error);
-            }
-        }
-
-        function startDocumentAutoRefresh() {
-            if (autoRefreshTimer) return;
-
-            autoRefreshTimer = setInterval(async () => {
-                await loadDocuments();
-            }, 10000);
         }
 
         function toggleAllDocuments() {
@@ -661,7 +1008,9 @@ Hi! Select ready documents or search all ready documents, then ask a question.
         function getSelectedDocumentIds() {
             const selectAll = document.getElementById("selectAllDocs").checked;
 
-            if (selectAll) return [];
+            if (selectAll) {
+                return [];
+            }
 
             const selected = [];
 
@@ -681,12 +1030,12 @@ Hi! Select ready documents or search all ready documents, then ask a question.
             const selectedIds = getSelectedDocumentIds();
 
             if (!hasReadyDocuments()) {
-                addMessage("assistant", "No ready documents are available yet. Please index documents first.");
+                addMessage("Assistant", "No ready documents are available. Please index documents first.", "assistant");
                 return false;
             }
 
             if (!selectAll && selectedIds.length === 0) {
-                addMessage("assistant", "Please select at least one ready document, or enable Search all ready documents.");
+                addMessage("Assistant", "Please select at least one ready document or enable Search all ready documents.", "assistant");
                 return false;
             }
 
@@ -700,12 +1049,16 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 data.results.forEach(result => {
                     if (result.status === "skipped_duplicate") {
                         messages.push(`${result.filename}: Already exists in knowledge base.`);
+                        showToast(`${result.filename} already exists`, "warning");
                     } else if (result.status === "skipped_unchanged") {
                         messages.push(`${result.filename}: Already indexed and unchanged.`);
+                        showToast(`${result.filename} already indexed`, "warning");
                     } else if (result.status === "queued_new_document") {
                         messages.push(`${result.filename}: Uploaded. Indexing started.`);
+                        showToast(`${result.filename} uploaded`, "success");
                     } else if (result.status === "queued_for_reindexing") {
                         messages.push(`${result.filename}: Updated file detected. Re-indexing started.`);
+                        showToast(`${result.filename} re-indexing started`, "success");
                     } else if (result.status === "already_processing") {
                         messages.push(`${result.filename}: Already processing.`);
                     } else {
@@ -732,7 +1085,7 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 formData.append("files", file);
             }
 
-            status.innerText = "Uploading files...";
+            status.innerText = "Uploading...";
 
             try {
                 const response = await fetch("/upload", {
@@ -746,10 +1099,11 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 input.value = "";
 
                 await loadDocuments();
+                startIndexStatusPolling();
 
             } catch (error) {
                 status.innerText = "Upload failed.";
-                console.error(error);
+                showToast("Upload failed", "error");
             }
         }
 
@@ -759,109 +1113,143 @@ Hi! Select ready documents or search all ready documents, then ask a question.
             const question = input.value.trim();
 
             if (!question) return;
+
             if (!validateBeforeSend()) return;
 
             const selectedDocumentIds = getSelectedDocumentIds();
 
-            addMessage("user", question);
-            input.value = "";
+            addMessage("You", question, "user");
 
-            addMessage("assistant typing", "Thinking...");
+            input.value = "";
             sendBtn.disabled = true;
 
-            const payload = {
-                question: question,
-                session_id: currentSessionId,
-                document_ids: selectedDocumentIds
-            };
+            addMessage("Assistant", "Thinking...", "assistant", true);
 
             try {
                 const response = await fetch("/chat", {
                     method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify(payload)
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        question: question,
+                        session_id: currentSessionId,
+                        document_ids: selectedDocumentIds
+                    })
                 });
 
                 const data = await response.json();
 
                 currentSessionId = data.session_id;
 
-                removeLastAssistantThinking();
+                removeThinkingMessage();
 
                 addAssistantAnswer(data.answer, data.sources || []);
 
                 await loadSessions();
 
             } catch (error) {
-                removeLastAssistantThinking();
-                addMessage("assistant", "Something went wrong while generating the answer.");
-                console.error(error);
+                removeThinkingMessage();
+                addMessage("Assistant", "Something went wrong while generating the answer.", "assistant");
+                showToast("Answer generation failed", "error");
             } finally {
                 sendBtn.disabled = false;
             }
         }
 
-        function addMessage(role, text) {
+        function addMessage(role, text, type, isThinking = false) {
             const chatBox = document.getElementById("chatBox");
 
-            const div = document.createElement("div");
-            div.className = "message " + role;
-            div.innerText = text;
+            const wrap = document.createElement("div");
+            wrap.className = "message-wrap";
 
-            chatBox.appendChild(div);
+            if (isThinking) {
+                wrap.setAttribute("data-thinking", "true");
+            }
+
+            const label = document.createElement("div");
+            label.className = "role-label";
+            label.innerText = role;
+
+            const msg = document.createElement("div");
+            msg.className = "message " + (type === "user" ? "user-message" : "assistant-message");
+
+            if (isThinking) {
+                msg.classList.add("typing");
+            }
+
+            msg.innerText = text;
+
+            wrap.appendChild(label);
+            wrap.appendChild(msg);
+
+            chatBox.appendChild(wrap);
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
         function addAssistantAnswer(answer, sources) {
             const chatBox = document.getElementById("chatBox");
 
-            const div = document.createElement("div");
-            div.className = "message assistant";
+            const wrap = document.createElement("div");
+            wrap.className = "message-wrap";
+
+            const label = document.createElement("div");
+            label.className = "role-label";
+            label.innerText = "Assistant";
+
+            const msg = document.createElement("div");
+            msg.className = "message assistant-message";
 
             const answerDiv = document.createElement("div");
             answerDiv.innerText = answer;
-            div.appendChild(answerDiv);
+
+            msg.appendChild(answerDiv);
 
             const copyBtn = document.createElement("button");
             copyBtn.className = "copy-btn";
-            copyBtn.innerText = "Copy answer";
+            copyBtn.innerText = "Copy";
             copyBtn.onclick = () => {
                 navigator.clipboard.writeText(answer);
                 copyBtn.innerText = "Copied";
-                setTimeout(() => copyBtn.innerText = "Copy answer", 1200);
+                setTimeout(() => copyBtn.innerText = "Copy", 1200);
             };
-            div.appendChild(copyBtn);
+
+            msg.appendChild(copyBtn);
 
             if (sources.length > 0) {
                 const sourcesBox = document.createElement("div");
                 sourcesBox.className = "sources-box";
-                sourcesBox.innerHTML = "<strong>Sources used</strong>";
+
+                const title = document.createElement("div");
+                title.className = "sources-title";
+                title.innerText = "Sources used";
+
+                sourcesBox.appendChild(title);
 
                 sources.forEach(source => {
                     const link = document.createElement("a");
                     link.className = "source-link";
                     link.href = source.download_url;
-                    link.innerText = "⬇ " + source.filename;
                     link.target = "_blank";
+                    link.innerText = "📄 " + source.filename;
                     sourcesBox.appendChild(link);
                 });
 
-                div.appendChild(sourcesBox);
+                msg.appendChild(sourcesBox);
             }
 
-            chatBox.appendChild(div);
+            wrap.appendChild(label);
+            wrap.appendChild(msg);
+
+            chatBox.appendChild(wrap);
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        function removeLastAssistantThinking() {
-            const messages = document.querySelectorAll(".message.assistant, .message.typing");
+        function removeThinkingMessage() {
+            const thinking = document.querySelector("[data-thinking='true']");
 
-            if (messages.length === 0) return;
-
-            const last = messages[messages.length - 1];
-
-            if (last.innerText === "Thinking...") {
-                last.remove();
+            if (thinking) {
+                thinking.remove();
             }
         }
 
@@ -871,18 +1259,23 @@ Hi! Select ready documents or search all ready documents, then ask a question.
             }
         }
 
-        async function newChat() {
+        function newChat() {
             currentSessionId = null;
 
             const chatBox = document.getElementById("chatBox");
             chatBox.innerHTML = "";
 
-            addMessage("assistant", "New chat started. Select documents and ask your question.");
+            addMessage(
+                "Assistant",
+                "New chat started. Select documents or search all ready documents, then ask your question.",
+                "assistant"
+            );
         }
 
         async function loadSessions() {
             try {
                 const response = await fetch("/sessions");
+
                 if (!response.ok) return;
 
                 const data = await response.json();
@@ -891,7 +1284,7 @@ Hi! Select ready documents or search all ready documents, then ask a question.
                 list.innerHTML = "";
 
                 if (!data.sessions || data.sessions.length === 0) {
-                    list.innerHTML = "<p class='empty-state'>No chat history yet.</p>";
+                    list.innerHTML = "<div class='empty-state'>No chat history yet.</div>";
                     return;
                 }
 
@@ -913,18 +1306,25 @@ Hi! Select ready documents or search all ready documents, then ask a question.
 
             try {
                 const response = await fetch(`/sessions/${sessionId}/messages`);
+
+                if (!response.ok) return;
+
                 const data = await response.json();
 
                 const chatBox = document.getElementById("chatBox");
                 chatBox.innerHTML = "";
 
                 data.messages.forEach(msg => {
-                    addMessage(msg.role === "user" ? "user" : "assistant", msg.message);
+                    addMessage(
+                        msg.role === "user" ? "You" : "Assistant",
+                        msg.message,
+                        msg.role === "user" ? "user" : "assistant"
+                    );
                 });
 
             } catch (error) {
-                addMessage("assistant", "Failed to load this chat session.");
                 console.error(error);
+                showToast("Failed to load chat", "error");
             }
         }
 
@@ -932,4 +1332,5 @@ Hi! Select ready documents or search all ready documents, then ask a question.
     </script>
 
 </body>
+
 </html>
