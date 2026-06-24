@@ -1877,6 +1877,49 @@ Give the final answer only.
 
     return response.json()["message"]["content"].strip()
 
+
+# ============================================================
+# SMALL TALK / NON-KB QUERY HELPERS
+# ============================================================
+
+def is_small_talk_question(question):
+    normalized = question.strip().lower()
+    normalized = re.sub(r"[^a-z0-9\s]", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    small_talk_phrases = {
+        "hi", "hii", "hiii", "hello", "helo", "helloo", "heelo",
+        "hey", "heyy",
+        "good morning", "good afternoon", "good evening",
+        "thanks", "thank you", "thankyou",
+        "ok", "okay", "done",
+        "bye", "goodbye"
+    }
+
+    if normalized in small_talk_phrases:
+        return True
+
+    # spelling tolerance
+    if len(normalized) <= 8 and normalized.startswith(("he", "hi", "hey")):
+        return True
+
+    return False
+
+
+def generate_small_talk_answer(question):
+    normalized = question.strip().lower()
+
+    if normalized in ["thanks", "thank you", "thankyou"]:
+        return "You're welcome. Ask me anything from the knowledge base whenever you're ready."
+
+    if normalized in ["bye", "goodbye"]:
+        return "Goodbye. You can come back anytime to search the knowledge base."
+
+    if normalized in ["ok", "okay", "done"]:
+        return "Okay. Please ask a document-related question when you're ready."
+
+    return "Hello! Please ask me anything from the selected knowledge base documents."
+
 # ============================================================
 # ROUTES: UI + AUTH
 # ============================================================
@@ -2533,6 +2576,24 @@ def chat(
         "user",
         request_data.question
     )
+
+    if is_small_talk_question(request_data.question):
+
+        answer = generate_small_talk_answer(request_data.question)
+
+        save_message(
+            session_id,
+            "assistant",
+            answer
+        )
+
+        return {
+            "session_id": session_id,
+            "answer": answer,
+            "search_scope": "general_greeting",
+            "document_ids": request_data.document_ids,
+            "sources": []
+        }
 
     chunks = retrieve_relevant_chunks(
         request_data.question,
