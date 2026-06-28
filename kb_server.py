@@ -1,3 +1,4 @@
+from db_server import database_assistant
 from fastapi import FastAPI, Request, BackgroundTasks, Response, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -17,8 +18,6 @@ import fitz
 from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
-
-from db_server import database_assistant
 
 app = FastAPI()
 
@@ -2673,6 +2672,27 @@ def db_chat(
     )
 
     return result
+
+
+@app.get("/db-schema")
+def db_schema(request: Request):
+
+    require_login(request)
+
+    return {
+        "schema": database_assistant.get_schema()
+    }
+
+
+@app.post("/db-schema/refresh")
+def refresh_db_schema(request: Request):
+
+    require_login(request)
+
+    return {
+        "message": "Database schema refreshed successfully.",
+        "schema": database_assistant.refresh_schema()
+    }
 
 # ============================================================
 # ROUTES: SESSIONS
