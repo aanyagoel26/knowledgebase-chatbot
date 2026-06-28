@@ -18,6 +18,7 @@ from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
 
+from db_server import database_assistant
 
 app = FastAPI()
 
@@ -104,6 +105,9 @@ class ChatRequest(BaseModel):
     question: str
     session_id: int | None = None
     document_ids: list[int] = []
+
+class DBChatRequest(BaseModel):
+    question: str
 
 
 class LoginRequest(BaseModel):
@@ -2591,7 +2595,7 @@ def chat(
             "session_id": session_id,
             "answer": answer,
             "search_scope": "general_greeting",
-            "document_ids": request_data.document_ids,
+            "document_ids": req-uest_data.document_ids,
             "sources": []
         }
 
@@ -2653,6 +2657,22 @@ def chat(
         "document_ids": request_data.document_ids,
         "sources": list(unique_sources.values())
     }
+
+# ============================================================
+# DATABASE CHAT
+# ============================================================
+@app.post("/db-chat")
+def db_chat(
+        request_data: DBChatRequest,
+        request: Request):
+
+    require_login(request)
+
+    result = database_assistant.answer_question(
+        request_data.question
+    )
+
+    return result
 
 # ============================================================
 # ROUTES: SESSIONS
