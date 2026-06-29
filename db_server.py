@@ -5,18 +5,15 @@ import json
 import psycopg2
 import requests
 
+
 # ============================================================
-# DATABASE CONFIG
+# CONFIG
 # ============================================================
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "kb_chatbot")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "Aanya2612")
-
-# ============================================================
-# MODEL CONFIG
-# ============================================================
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2.5:7b")
 OLLAMA_CHAT_URL = os.getenv(
@@ -25,6 +22,7 @@ OLLAMA_CHAT_URL = os.getenv(
 )
 
 MAX_ROWS = 100
+QUERY_TIMEOUT_MS = 10000
 
 
 # ============================================================
@@ -53,45 +51,23 @@ class SchemaReader:
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_type = 'BASE TABLE'
-            ORDER BY table_name;
-            """
-        )
+        tables = self._read_tables(cursor)
 
-        table_rows = cursor.fetchall()
         schema = []
 
-        for table_row in table_rows:
-            table_name = table_row[0]
-
-            cursor.execute(
-                """
-                SELECT column_name, data_type
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = %s
-                ORDER BY ordinal_position;
-                """,
-                (table_name,)
-            )
-
-            column_rows = cursor.fetchall()
+        for table_name in tables:
+            columns = self._read_columns(cursor, table_name)
+            primary_keys = self._read_primary_keys(cursor, table_name)
+            foreign_keys = self._read_foreign_keys(cursor, table_name)
+            sample_rows = self._read_sample_rows(cursor, table_name, columns)
 
             schema.append(
                 {
                     "table_name": table_name,
-                    "columns": [
-                        {
-                            "column_name": col[0],
-                            "data_type": col[1]
-                        }
-                        for col in column_rows
-                    ]
+                    "columns": columns,
+                    "primary_keys": primary_keys,
+                    "foreign_keys": foreign_keys,
+                    "sample_rows": sample_rows
                 }
             )
 
@@ -100,20 +76,165 @@ class SchemaReader:
 
         return schema
 
+    def _read_tables(self, cursor):
+        cursor.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema='public'
+              AND table_type='BASE TABLE'
+            ORDER BY table_name;
+            """
+        )
+
+        return [row[0] for row in cursor.fetchall()]
+
+    def _read_columns(self, cursor, table_name):
+        cursor.execute(
+            """
+            SELECT
+                column_name,
+                data_type,
+                is_nullable,
+                column_default
+            FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name=%s
+            ORDER BY ordinal_position;
+            """,
+            (table_name,)
+        )
+
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "column_name": row[0],
+                "data_type": row[1],
+                "is_nullable": row[2],
+                "column_default": row[3]
+            }
+            for row in rows
+        ]
+
+    def _read_primary_keys(self, cursor, table_name):
+        cursor.execute(
+            """
+            SELECT kcu.column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            WHERE tc.constraint_type = 'PRIMARY KEY'
+              AND tc.table_schema = 'public'
+              AND tc.table_name = %s;
+            """,
+            (table_name,)
+        )
+
+        return [row[0] for row in cursor.fetchall()]
+
+    def _read_foreign_keys(self, cursor, table_name):
+        cursor.execute(
+            """
+            SELECT
+                kcu.column_name,
+                ccu.table_name AS foreign_table_name,
+                ccu.column_name AS foreign_column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON ccu.constraint_name = tc.constraint_name
+             AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = 'public'
+              AND tc.table_name = %s;
+            """,
+            (table_name,)
+        )
+
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "column_name": row[0],
+                "foreign_table_name": row[1],
+                "foreign_column_name": row[2]
+            }
+            for row in rows
+        ]
+
+    def _read_sample_rows(self, cursor, table_name, columns):
+        try:
+            column_names = [column["column_name"] for column in columns]
+
+            if not column_names:
+                return []
+
+            safe_table = self._quote_identifier(table_name)
+
+            cursor.execute(
+                f"SELECT * FROM {safe_table} LIMIT 3;"
+            )
+
+            rows = cursor.fetchall()
+
+            sample_rows = []
+
+            for row in rows:
+                sample = {}
+
+                for index, value in enumerate(row):
+                    sample[column_names[index]] = str(value) if value is not None else None
+
+                sample_rows.append(sample)
+
+            return sample_rows
+
+        except Exception:
+            return []
+
+    def _quote_identifier(self, identifier):
+        safe_identifier = identifier.replace('"', '""')
+        return f'"{safe_identifier}"'
+
     def schema_as_text(self, schema):
         lines = []
 
         for table in schema:
-            columns = []
+            table_name = table["table_name"]
+
+            column_parts = []
 
             for column in table["columns"]:
-                columns.append(
+                column_text = (
                     f"{column['column_name']} {column['data_type']}"
                 )
 
+                if column["column_name"] in table["primary_keys"]:
+                    column_text += " PRIMARY KEY"
+
+                column_parts.append(column_text)
+
             lines.append(
-                f"{table['table_name']}({', '.join(columns)})"
+                f"TABLE {table_name}: " + ", ".join(column_parts)
             )
+
+            for fk in table["foreign_keys"]:
+                lines.append(
+                    f"RELATION {table_name}.{fk['column_name']} -> "
+                    f"{fk['foreign_table_name']}.{fk['foreign_column_name']}"
+                )
+
+            if table["sample_rows"]:
+                lines.append(
+                    f"SAMPLE {table_name}: "
+                    + json.dumps(table["sample_rows"], default=str)
+                )
+
+            lines.append("")
 
         return "\n".join(lines)
 
@@ -125,17 +246,22 @@ class SchemaReader:
 class SQLGenerator:
     def generate_sql(self, question, schema_text):
         system_prompt = """
-You are a PostgreSQL SQL generator.
+You are an expert PostgreSQL SQL generator for an enterprise database assistant.
 
 Rules:
-- Generate only one SQL query.
-- Use only SELECT queries.
-- Do not generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE.
-- Use only the tables and columns provided in the schema.
-- If the user asks for all records, still add LIMIT 100.
-- Prefer readable column aliases.
-- Do not include markdown.
+- Generate exactly one SQL query.
+- Only generate SELECT or WITH queries.
+- Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, COPY, EXECUTE.
+- Use only tables and columns present in the provided schema.
+- Prefer explicit column names instead of SELECT *.
+- Use readable aliases.
+- If user asks for all records, still add LIMIT 100.
+- For counts, use COUNT(*).
+- For department-wise or category-wise questions, use GROUP BY.
+- For latest/recent questions, use ORDER BY created_at DESC if such a column exists.
+- Do not use markdown.
 - Do not explain the query.
+- Return only SQL.
 """
 
         user_prompt = f"""
@@ -145,7 +271,7 @@ Database schema:
 User question:
 {question}
 
-Return only the SQL query.
+Return only the PostgreSQL SQL query.
 """
 
         response = requests.post(
@@ -171,6 +297,7 @@ Return only the SQL query.
             raise Exception("SQL generation failed: " + response.text)
 
         sql = response.json()["message"]["content"].strip()
+
         sql = sql.replace("```sql", "")
         sql = sql.replace("```", "")
         sql = sql.strip()
@@ -203,13 +330,14 @@ class SQLValidator:
             "grant",
             "revoke",
             "copy",
-            "execute"
+            "execute",
+            "call",
+            "do"
         ]
 
         for word in blocked_words:
-            pattern = r"\b" + word + r"\b"
-            if re.search(pattern, sql_clean):
-                raise Exception(f"Blocked unsafe SQL keyword: {word}")
+            if re.search(r"\b" + word + r"\b", sql_clean):
+                raise Exception(f"Unsafe SQL keyword blocked: {word}")
 
         if not (
             sql_clean.startswith("select")
@@ -241,7 +369,10 @@ class SQLExecutor:
         cursor = conn.cursor()
 
         try:
-            cursor.execute("SET statement_timeout = 10000;")
+            cursor.execute(
+                f"SET statement_timeout = {QUERY_TIMEOUT_MS};"
+            )
+
             cursor.execute(sql)
 
             rows = cursor.fetchall()
@@ -270,8 +401,7 @@ class AnswerFormatter:
         row_count = len(rows)
 
         if row_count == 1 and len(columns) == 1:
-            value = rows[0][0]
-            return f"The result is {value}."
+            return f"The result is {rows[0][0]}."
 
         if row_count == 1:
             return "Found 1 matching record. The details are shown below."
@@ -290,21 +420,20 @@ class DatabaseAssistant:
         self.sql_validator = SQLValidator()
         self.sql_executor = SQLExecutor()
         self.answer_formatter = AnswerFormatter()
+
         self.cached_schema = None
         self.cached_schema_text = None
+        self.cached_at = None
 
     def get_schema(self):
         if self.cached_schema is None:
-            self.cached_schema = self.schema_reader.read_schema()
-            self.cached_schema_text = self.schema_reader.schema_as_text(
-                self.cached_schema
-            )
+            self.refresh_schema()
 
         return self.cached_schema
 
     def get_schema_text(self):
         if self.cached_schema_text is None:
-            self.get_schema()
+            self.refresh_schema()
 
         return self.cached_schema_text
 
@@ -313,8 +442,26 @@ class DatabaseAssistant:
         self.cached_schema_text = self.schema_reader.schema_as_text(
             self.cached_schema
         )
+        self.cached_at = time.time()
 
         return self.cached_schema
+
+    def get_schema_summary(self):
+        schema = self.get_schema()
+
+        return {
+            "table_count": len(schema),
+            "tables": [
+                {
+                    "table_name": table["table_name"],
+                    "column_count": len(table["columns"]),
+                    "primary_keys": table["primary_keys"],
+                    "foreign_keys": table["foreign_keys"]
+                }
+                for table in schema
+            ],
+            "cached_at": self.cached_at
+        }
 
     def answer_question(self, question: str):
         start_time = time.time()
@@ -333,10 +480,7 @@ class DatabaseAssistant:
 
             columns, rows = self.sql_executor.execute(safe_sql)
 
-            formatted_rows = [
-                [str(value) if value is not None else "" for value in row]
-                for row in rows
-            ]
+            formatted_rows = self.format_rows(rows)
 
             answer = self.answer_formatter.generate_answer(
                 question,
@@ -350,13 +494,15 @@ class DatabaseAssistant:
                 "rows": formatted_rows,
                 "row_count": len(rows),
                 "execution_time": round(time.time() - start_time, 3),
-                # kept for backend debugging only; frontend will not display it
                 "sql": safe_sql
             }
 
         except Exception as error:
             return {
-                "answer": "I could not answer this database question. Please try asking it more clearly.",
+                "answer": (
+                    "I could not answer this database question. "
+                    "Please try asking it more clearly."
+                ),
                 "columns": [],
                 "rows": [],
                 "row_count": 0,
@@ -364,6 +510,25 @@ class DatabaseAssistant:
                 "error": str(error)
             }
 
+    def format_rows(self, rows):
+        formatted_rows = []
 
-# Single object imported by kb_server.py
+        for row in rows:
+            formatted_row = []
+
+            for value in row:
+                if value is None:
+                    formatted_row.append("")
+                else:
+                    formatted_row.append(str(value))
+
+            formatted_rows.append(formatted_row)
+
+        return formatted_rows
+
+
+# ============================================================
+# SINGLE IMPORTABLE OBJECT
+# ============================================================
+
 database_assistant = DatabaseAssistant()
