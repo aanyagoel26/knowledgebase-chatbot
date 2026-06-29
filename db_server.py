@@ -5,17 +5,31 @@ import json
 import psycopg2
 import requests
 
+# ============================================================
+# DATABASE CONFIG
+# ============================================================
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "kb_chatbot")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "Aanya2612")
 
+# ============================================================
+# MODEL CONFIG
+# ============================================================
+
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2.5:7b")
-OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+OLLAMA_CHAT_URL = os.getenv(
+    "OLLAMA_CHAT_URL",
+    "http://localhost:11434/api/chat"
+)
 
 MAX_ROWS = 100
 
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
 
 class DatabaseConnection:
     def get_connection(self):
@@ -26,6 +40,10 @@ class DatabaseConnection:
             password=DB_PASSWORD
         )
 
+
+# ============================================================
+# SCHEMA READER
+# ============================================================
 
 class SchemaReader:
     def __init__(self):
@@ -100,6 +118,10 @@ class SchemaReader:
         return "\n".join(lines)
 
 
+# ============================================================
+# SQL GENERATOR
+# ============================================================
+
 class SQLGenerator:
     def generate_sql(self, question, schema_text):
         system_prompt = """
@@ -149,13 +171,16 @@ Return only the SQL query.
             raise Exception("SQL generation failed: " + response.text)
 
         sql = response.json()["message"]["content"].strip()
-
         sql = sql.replace("```sql", "")
         sql = sql.replace("```", "")
         sql = sql.strip()
 
         return sql
 
+
+# ============================================================
+# SQL VALIDATOR
+# ============================================================
 
 class SQLValidator:
     def validate(self, sql):
@@ -203,6 +228,10 @@ class SQLValidator:
         return sql_clean + f" LIMIT {MAX_ROWS}"
 
 
+# ============================================================
+# SQL EXECUTOR
+# ============================================================
+
 class SQLExecutor:
     def __init__(self):
         self.db = DatabaseConnection()
@@ -211,78 +240,48 @@ class SQLExecutor:
         conn = self.db.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SET statement_timeout = 10000;")
-        cursor.execute(sql)
+        try:
+            cursor.execute("SET statement_timeout = 10000;")
+            cursor.execute(sql)
 
-        rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
 
-        cursor.close()
-        conn.close()
+            cursor.close()
+            conn.close()
 
-        return columns, rows
+            return columns, rows
 
+        except Exception as error:
+            cursor.close()
+            conn.close()
+            raise error
+
+
+# ============================================================
+# ANSWER FORMATTER
+# ============================================================
 
 class AnswerFormatter:
-    def generate_answer(self, question, sql, columns, rows):
+    def generate_answer(self, question, columns, rows):
         if not rows:
-            return "No matching records were found for your question."
+            return "No matching records were found."
 
-        preview_rows = rows[:20]
+        row_count = len(rows)
 
-        result_text = {
-            "columns": columns,
-            "rows": preview_rows
-        }
+        if row_count == 1 and len(columns) == 1:
+            value = rows[0][0]
+            return f"The result is {value}."
 
-        system_prompt = """
-You are a database assistant.
+        if row_count == 1:
+            return "Found 1 matching record. The details are shown below."
 
-Your job:
-- Explain SQL results in simple natural language.
-- Do not mention internal implementation details.
-- Do not say "based on SQL" unless necessary.
-- If the result is tabular, summarize what the table shows.
-- Be concise and professional.
-"""
+        return f"Found {row_count} matching records. The details are shown below."
 
-        user_prompt = f"""
-User question:
-{question}
 
-SQL query used:
-{sql}
-
-Query result:
-{json.dumps(result_text, default=str, indent=2)}
-
-Give a clear final answer.
-"""
-
-        response = requests.post(
-            OLLAMA_CHAT_URL,
-            json={
-                "model": CHAT_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": user_prompt
-                    }
-                ],
-                "stream": False
-            },
-            timeout=180
-        )
-
-        if response.status_code != 200:
-            return "The query was executed successfully. The result is shown in the table below."
-
-        return response.json()["message"]["content"].strip()
-
+# ============================================================
+# DATABASE ASSISTANT
+# ============================================================
 
 class DatabaseAssistant:
     def __init__(self):
@@ -320,38 +319,51 @@ class DatabaseAssistant:
     def answer_question(self, question: str):
         start_time = time.time()
 
-        schema_text = self.get_schema_text()
+        try:
+            schema_text = self.get_schema_text()
 
-        sql = self.sql_generator.generate_sql(
-            question,
-            schema_text
-        )
+            sql = self.sql_generator.generate_sql(
+                question,
+                schema_text
+            )
 
-        self.sql_validator.validate(sql)
+            self.sql_validator.validate(sql)
 
-        safe_sql = self.sql_validator.add_limit_if_missing(sql)
+            safe_sql = self.sql_validator.add_limit_if_missing(sql)
 
-        columns, rows = self.sql_executor.execute(safe_sql)
+            columns, rows = self.sql_executor.execute(safe_sql)
 
-        answer = self.answer_formatter.generate_answer(
-            question,
-            safe_sql,
-            columns,
-            rows
-        )
+            formatted_rows = [
+                [str(value) if value is not None else "" for value in row]
+                for row in rows
+            ]
 
-        formatted_rows = [
-            [str(value) if value is not None else "" for value in row]
-            for row in rows
-        ]
+            answer = self.answer_formatter.generate_answer(
+                question,
+                columns,
+                rows
+            )
 
-        return {
-            "answer": answer,
-            "sql": safe_sql,
-            "columns": columns,
-            "rows": formatted_rows,
-            "execution_time": round(time.time() - start_time, 3)
-        }
+            return {
+                "answer": answer,
+                "columns": columns,
+                "rows": formatted_rows,
+                "row_count": len(rows),
+                "execution_time": round(time.time() - start_time, 3),
+                # kept for backend debugging only; frontend will not display it
+                "sql": safe_sql
+            }
+
+        except Exception as error:
+            return {
+                "answer": "I could not answer this database question. Please try asking it more clearly.",
+                "columns": [],
+                "rows": [],
+                "row_count": 0,
+                "execution_time": round(time.time() - start_time, 3),
+                "error": str(error)
+            }
 
 
+# Single object imported by kb_server.py
 database_assistant = DatabaseAssistant()
