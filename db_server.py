@@ -24,6 +24,24 @@ OLLAMA_CHAT_URL = os.getenv(
 MAX_ROWS = 100
 QUERY_TIMEOUT_MS = 10000
 
+SENSITIVE_COLUMN_KEYWORDS = [
+    "password",
+    "pass",
+    "pwd",
+    "hash",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "key",
+    "salt",
+    "otp",
+    "pin",
+    "reset",
+    "auth",
+    "credential"
+]
+
 
 # ============================================================
 # DATABASE CONNECTION
@@ -107,15 +125,24 @@ class SchemaReader:
 
         rows = cursor.fetchall()
 
-        return [
-            {
-                "column_name": row[0],
-                "data_type": row[1],
-                "is_nullable": row[2],
-                "column_default": row[3]
-            }
-            for row in rows
-        ]
+        safe_columns = []
+
+        for row in rows:
+            column_name = row[0]
+
+            if self.is_sensitive_column(column_name):
+                continue
+
+            safe_columns.append(
+                {
+                    "column_name": column_name,
+                    "data_type": row[1],
+                    "is_nullable": row[2],
+                    "column_default": row[3]
+                }
+            )
+
+        return safe_columns
 
     def _read_primary_keys(self, cursor, table_name):
         cursor.execute(
@@ -174,9 +201,12 @@ class SchemaReader:
                 return []
 
             safe_table = self._quote_identifier(table_name)
+            safe_columns = ", ".join(
+                [self._quote_identifier(column) for column in column_names]
+            )
 
             cursor.execute(
-                f"SELECT * FROM {safe_table} LIMIT 3;"
+                f"SELECT {safe_columns} FROM {safe_table} LIMIT 3;"
             )
 
             rows = cursor.fetchall()
@@ -187,7 +217,9 @@ class SchemaReader:
                 sample = {}
 
                 for index, value in enumerate(row):
-                    sample[column_names[index]] = str(value) if value is not None else None
+                    sample[column_names[index]] = (
+                        str(value) if value is not None else None
+                    )
 
                 sample_rows.append(sample)
 
@@ -223,6 +255,9 @@ class SchemaReader:
             )
 
             for fk in table["foreign_keys"]:
+                if self.is_sensitive_column(fk["column_name"]):
+                    continue
+
                 lines.append(
                     f"RELATION {table_name}.{fk['column_name']} -> "
                     f"{fk['foreign_table_name']}.{fk['foreign_column_name']}"
@@ -237,6 +272,15 @@ class SchemaReader:
             lines.append("")
 
         return "\n".join(lines)
+
+    def is_sensitive_column(self, column_name):
+        column_name = column_name.lower()
+
+        for keyword in SENSITIVE_COLUMN_KEYWORDS:
+            if keyword in column_name:
+                return True
+
+        return False
 
 
 # ============================================================
@@ -255,6 +299,8 @@ Rules:
 - Use only tables and columns present in the provided schema.
 - Prefer explicit column names instead of SELECT *.
 - Use readable aliases.
+- Never select password, token, hash, secret, credential, otp, api key, or authentication-related columns.
+- If user asks for password, credentials, token, or login secret, do not generate SQL for that sensitive data.
 - If user asks for all records, still add LIMIT 100.
 - For counts, use COUNT(*).
 - For department-wise or category-wise questions, use GROUP BY.
@@ -334,6 +380,16 @@ class SQLValidator:
             "call",
             "do"
         ]
+
+        for keyword in SENSITIVE_COLUMN_KEYWORDS:
+            pattern = (
+                r"\b[a-zA-Z0-9_]*"
+                + re.escape(keyword)
+                + r"[a-zA-Z0-9_]*\b"
+            )
+
+            if re.search(pattern, sql_clean):
+                raise Exception("Query contains sensitive column reference.")
 
         for word in blocked_words:
             if re.search(r"\b" + word + r"\b", sql_clean):
@@ -462,10 +518,22 @@ class DatabaseAssistant:
             ],
             "cached_at": self.cached_at
         }
-
+    
     def answer_question(self, question: str):
         start_time = time.time()
 
+        if self.is_sensitive_question(question):
+            return {
+                "answer": (
+                    "For security reasons, passwords, password hashes, tokens, "
+                    "and credentials cannot be viewed through the assistant. "
+                    "If someone forgets their password, they should use the password reset process."
+                ),
+                "columns": [],
+                "rows": [],
+                "row_count": 0,
+                "execution_time": round(time.time() - start_time, 3)
+            }
         try:
             schema_text = self.get_schema_text()
 
@@ -525,7 +593,28 @@ class DatabaseAssistant:
             formatted_rows.append(formatted_row)
 
         return formatted_rows
-
+    
+    def is_sensitive_question(self, question):
+        question = question.lower()
+        
+        sensitive_words = [
+            "password",
+            "pass",
+            "pwd",
+            "hash",
+            "token",
+            "secret",
+            "credential",
+            "otp",
+            "pin",
+            "api key",
+            "apikey",
+            "login secret"
+        ]
+        for word in sensitive_words:
+            if word in question:
+                return True
+        return False
 
 # ============================================================
 # SINGLE IMPORTABLE OBJECT
