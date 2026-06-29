@@ -561,8 +561,7 @@ class DatabaseAssistant:
                 "columns": columns,
                 "rows": formatted_rows,
                 "row_count": len(rows),
-                "execution_time": round(time.time() - start_time, 3),
-                "sql": safe_sql
+                "execution_time": round(time.time() - start_time, 3)
             }
 
         except Exception as error:
