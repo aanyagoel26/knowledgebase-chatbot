@@ -107,6 +107,7 @@ class ChatRequest(BaseModel):
 
 class DBChatRequest(BaseModel):
     question: str
+    session_id: int | None = None
 
 
 class LoginRequest(BaseModel):
@@ -309,6 +310,20 @@ def ensure_schema_updates():
             title TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE chat_sessions
+        ADD COLUMN IF NOT EXISTS employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE;
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE chat_sessions
+        ADD COLUMN IF NOT EXISTS assistant_mode TEXT DEFAULT 'knowledge';
         """
     )
 
@@ -1750,31 +1765,49 @@ def retrieve_relevant_chunks(question, document_ids=None):
 # SESSION HELPERS
 # ============================================================
 
-def create_session_if_needed(session_id, first_question):
+def create_session_if_needed(session_id, first_question, employee_id, assistant_mode):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     if session_id is not None:
+        cursor.execute(
+            """
+            SELECT session_id
+            FROM chat_sessions
+            WHERE session_id=%s
+              AND employee_id=%s
+              AND assistant_mode=%s
+            """,
+            (session_id, employee_id, assistant_mode)
+        )
+
+        row = cursor.fetchone()
+
         cursor.close()
         conn.close()
 
-        return session_id
+        if row:
+            return session_id
+
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this chat session."
+        )
 
     title = first_question[:60]
 
     cursor.execute(
         """
-        INSERT INTO chat_sessions(title)
-        VALUES (%s)
+        INSERT INTO chat_sessions(title, employee_id, assistant_mode)
+        VALUES (%s,%s,%s)
         RETURNING session_id
         """,
-        (title,)
+        (title, employee_id, assistant_mode)
     )
 
     new_session_id = cursor.fetchone()[0]
 
     conn.commit()
-
     cursor.close()
     conn.close()
 
@@ -2566,12 +2599,14 @@ def retrieve(
 def chat(
         request_data: ChatRequest,
         request: Request):
-
-    require_login(request)
-
+    
+    employee = require_login(request)
+    
     session_id = create_session_if_needed(
         request_data.session_id,
-        request_data.question
+        request_data.question,
+        employee["employee_id"],
+        "knowledge"
     )
 
     save_message(
@@ -2665,43 +2700,44 @@ def db_chat(
         request_data: DBChatRequest,
         request: Request):
 
-    require_login(request)
+    employee = require_login(request)
+
+    session_id = create_session_if_needed(
+        request_data.session_id,
+        request_data.question,
+        employee["employee_id"],
+        "database"
+    )
+
+    save_message(
+        session_id,
+        "user",
+        request_data.question
+    )
 
     result = database_assistant.answer_question(
         request_data.question
     )
 
+    save_message(
+        session_id,
+        "assistant",
+        result["answer"]
+    )
+
+    result["session_id"] = session_id
+
     return result
-
-
-@app.get("/db-schema")
-def db_schema(request: Request):
-
-    require_login(request)
-
-    return {
-        "schema": database_assistant.get_schema()
-    }
-
-
-@app.post("/db-schema/refresh")
-def refresh_db_schema(request: Request):
-
-    require_login(request)
-
-    return {
-        "message": "Database schema refreshed successfully.",
-        "schema": database_assistant.refresh_schema()
-    }
-
 # ============================================================
 # ROUTES: SESSIONS
 # ============================================================
 
 @app.get("/sessions")
-def get_sessions(request: Request):
+def get_sessions(
+        request: Request,
+        mode: str = "knowledge"):
 
-    require_login(request)
+    employee = require_login(request)
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2713,8 +2749,14 @@ def get_sessions(request: Request):
             title,
             created_at
         FROM chat_sessions
+        WHERE employee_id=%s
+          AND assistant_mode=%s
         ORDER BY created_at DESC
-        """
+        """,
+        (
+            employee["employee_id"],
+            mode
+        )
     )
 
     rows = cursor.fetchall()
@@ -2725,7 +2767,6 @@ def get_sessions(request: Request):
     sessions = []
 
     for row in rows:
-
         sessions.append(
             {
                 "session_id": row[0],
@@ -2748,10 +2789,33 @@ def get_session_messages(
         session_id: int,
         request: Request):
 
-    require_login(request)
+    employee = require_login(request)
 
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT session_id
+        FROM chat_sessions
+        WHERE session_id=%s
+          AND employee_id=%s
+        """,
+        (
+            session_id,
+            employee["employee_id"]
+        )
+    )
+
+    allowed = cursor.fetchone()
+
+    if not allowed:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this chat."
+        )
 
     cursor.execute(
         """
@@ -2774,7 +2838,6 @@ def get_session_messages(
     messages = []
 
     for row in rows:
-
         messages.append(
             {
                 "role": row[0],

@@ -888,6 +888,8 @@
                 document.getElementById("systemStatus").innerText = "Database Mode";
             }
 
+            currentSessionId = null;
+            loadSessions();
             newChat();
             showToast(
                 mode === "knowledge" ? "Knowledge mode selected" : "Database mode selected",
@@ -915,6 +917,14 @@
         }
 
         function showLogin() {
+            employee = null;
+            currentSessionId = null;
+
+            const chatBox = document.getElementById("chatBox");
+            if (chatBox) {
+                chatBox.innerHTML = "";
+            }
+
             document.getElementById("loginPage").style.display = "flex";
             document.getElementById("appPage").style.display = "none";
         }
@@ -928,6 +938,10 @@
             await loadDocuments();
             await loadSessions();
             startAutoRefresh();
+
+            currentSessionId = null;
+            newChat();
+            await loadSessions();
         }
 
         async function login() {
@@ -967,9 +981,21 @@
             try {
                 await fetch("/logout", { method: "POST" });
             } catch { }
+
             employee = null;
             currentSessionId = null;
+            documents = [];
+
             stopAutoRefresh();
+
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = "";
+
+            const sessionsList = document.getElementById("sessionsList");
+            if (sessionsList) {
+                sessionsList.innerHTML = "";
+            }
+
             showLogin();
         }
 
@@ -1286,14 +1312,15 @@
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            question: question
+                            question: question,
+                            session_id: currentSessionId
                         })
                     });
                 }
 
                 const data = await response.json();
 
-                if (assistantMode === "knowledge") {
+                if (data.session_id) {
                     currentSessionId = data.session_id;
                 }
                 removeThinkingMessage();
@@ -1472,8 +1499,9 @@
 
         async function loadSessions() {
             try {
-                const response = await fetch("/sessions");
+                const response = await fetch(`/sessions?mode=${assistantMode}`);
                 if (!response.ok) return;
+
                 const data = await response.json();
                 const list = document.getElementById("sessionsList");
                 list.innerHTML = "";
