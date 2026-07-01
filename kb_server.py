@@ -5,6 +5,7 @@ from psycopg2.extras import execute_values
 import requests
 import os
 import shutil
+import hashlib
 import re
 import csv
 import threading
