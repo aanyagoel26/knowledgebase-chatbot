@@ -1369,50 +1369,55 @@ def rerank_chunks(chunks, question):
     reranked = []
 
     for chunk in chunks:
-        content = chunk["content"]
-        content_lower = content.lower()
-        content_words = set(tokenize(content))
+        content_lower = chunk["content"].lower()
+        filename_lower = chunk["filename"].lower()
+        content_words = set(tokenize(chunk["content"]))
 
         keyword_hits = len(question_words.intersection(content_words))
         keyword_coverage = keyword_hits / max(1, len(question_words))
 
         vector_score = 1 / (1 + chunk["vector_distance"])
 
-        source_bonus = 0
+        filename_hits = 0
+        for word in question_words:
+            if word in filename_lower:
+                filename_hits += 1
 
+        filename_bonus = filename_hits * 6.0
+
+        exact_phrase_bonus = 0
+        if question_text and question_text in content_lower:
+            exact_phrase_bonus += 4.0
+
+        content_title_bonus = 0
+        for word in question_words:
+            if word in content_lower[:300]:
+                content_title_bonus += 2.0
+
+        source_bonus = 0
         if chunk["from_vector"]:
             source_bonus += 0.4
-
         if chunk["from_keyword"]:
             source_bonus += 0.8
 
-        exact_phrase_bonus = 0
-
-        if question_text and question_text in content_lower:
-            exact_phrase_bonus = 3.0
-
-        title_like_bonus = 0
-
-        if keyword_coverage >= 0.6:
-            title_like_bonus = 1.5
-
         penalty = 0
-
-        if keyword_coverage < 0.25:
-            penalty += 2.0
+        if keyword_coverage == 0 and filename_hits == 0:
+            penalty += 4.0
 
         final_score = (
             keyword_hits
             + keyword_coverage
             + vector_score
             + source_bonus
+            + filename_bonus
             + exact_phrase_bonus
-            + title_like_bonus
+            + content_title_bonus
             - penalty
         )
 
         chunk["keyword_hits"] = keyword_hits
         chunk["keyword_coverage"] = keyword_coverage
+        chunk["filename_hits"] = filename_hits
         chunk["vector_score"] = vector_score
         chunk["final_score"] = final_score
 
@@ -1420,7 +1425,7 @@ def rerank_chunks(chunks, question):
 
     reranked = [
         chunk for chunk in reranked
-        if chunk["keyword_coverage"] >= 0.25 or chunk["final_score"] >= 2.5
+        if chunk["final_score"] >= 2.5
     ]
 
     reranked.sort(
@@ -1590,7 +1595,68 @@ def retrieve_relevant_chunks(question, document_ids=None):
     cursor.close()
     conn.close()
 
+    final_chunks.sort(
+        key=lambda item: item.get("final_score", 0),
+        reverse=True
+)
+
+
     return final_chunks[:MAX_CONTEXT_CHUNKS_TOTAL]
+
+def retrieve_document_summary_chunks(document_ids):
+    if not document_ids:
+        return []
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    placeholders = ",".join(["%s"] * len(document_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            c.chunk_id,
+            c.document_id,
+            d.original_filename,
+            c.chunk_number,
+            c.content
+        FROM document_chunks c
+        JOIN documents d
+        ON c.document_id = d.document_id
+        WHERE c.document_id IN ({placeholders})
+          AND d.indexing_status = 'ready'
+        ORDER BY c.document_id, c.chunk_number
+        LIMIT %s
+        """,
+        document_ids + [MAX_CONTEXT_CHUNKS_TOTAL]
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    chunks = []
+
+    for row in rows:
+        chunks.append(
+            {
+                "chunk_id": row[0],
+                "document_id": row[1],
+                "filename": row[2],
+                "chunk_number": row[3],
+                "content": row[4],
+                "vector_distance": 0,
+                "from_vector": False,
+                "from_keyword": False,
+                "retrieval_type": "document_summary",
+                "keyword_hits": 0,
+                "vector_score": 0,
+                "final_score": 10
+            }
+        )
+
+    return chunks
 
 
 # ============================================================
@@ -1772,6 +1838,22 @@ def is_small_talk_question(question):
         return True
 
     return False
+
+def is_summary_question(question):
+    q = question.strip().lower()
+
+    summary_words = [
+        "summary",
+        "summarize",
+        "summarise",
+        "overview",
+        "brief",
+        "short note",
+        "explain document",
+        "what is this document about"
+    ]
+
+    return any(word in q for word in summary_words)
 
 
 def generate_small_talk_answer(question):
@@ -2392,10 +2474,15 @@ def retrieve(
 
     require_login(request)
 
-    chunks = retrieve_relevant_chunks(
-        request_data.question,
-        request_data.document_ids
-    )
+    if request_data.document_ids and is_summary_question(request_data.question):
+        chunks = retrieve_document_summary_chunks(
+            request_data.document_ids
+        )
+    else:
+        chunks = retrieve_relevant_chunks(
+            request_data.question,
+            request_data.document_ids
+        )
 
     return {
         "question": request_data.question,

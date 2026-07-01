@@ -843,6 +843,7 @@
         let documentRefreshTimer = null;
         let indexStatusTimer = null;
         let wasIndexing = false;
+        let selectedDocumentIds = new Set();
 
         function showToast(message, type = "success") {
             const container = document.getElementById("toastContainer");
@@ -1129,37 +1130,57 @@
             const search = document.getElementById("docSearchInput").value.toLowerCase();
             list.innerHTML = "";
 
-            const filteredDocs = documents.filter(doc => doc.filename.toLowerCase().includes(search));
+            const filteredDocs = documents.filter(doc =>
+                doc.filename.toLowerCase().includes(search)
+            );
 
             if (filteredDocs.length === 0) {
                 list.innerHTML = "<div class='empty-state'>No documents found.</div>";
                 return;
             }
 
+            const selectAll = document.getElementById("selectAllDocs").checked;
+
             filteredDocs.forEach(doc => {
                 const status = doc.indexing_status || "ready";
-                const disabled = status === "ready" ? "" : "disabled";
                 const statusClass = getStatusClass(status);
+                const ready = isReady(doc);
+
+                const checked = selectedDocumentIds.has(doc.document_id) ? "checked" : "";
+                const disabled = (!ready || selectAll) ? "disabled" : "";
 
                 const div = document.createElement("div");
                 div.className = "doc-item";
                 div.innerHTML = `
-                    <label>
-                        <input type="checkbox" class="doc-check" value="${doc.document_id}" ${disabled}>
-                        <span class="doc-name">${doc.filename}</span>
-                    </label>
-                    <div class="doc-meta">
-                        ID: ${doc.document_id}<br>
-                        Version: ${doc.version}<br>
-                        Chunks: ${doc.chunks}
-                    </div>
-                    <span class="status-pill ${statusClass}">${status.toUpperCase()}</span>
-                    ${doc.error_message ? `<div class="error-text">Error: ${doc.error_message}</div>` : ""}
-                `;
+            <label>
+                <input type="checkbox"
+                       class="doc-check"
+                       value="${doc.document_id}"
+                       ${checked}
+                       ${disabled}
+                       onchange="updateSelectedDocument(${doc.document_id}, this.checked)">
+                <span class="doc-name">${doc.filename}</span>
+            </label>
+            <div class="doc-meta">
+                ID: ${doc.document_id}<br>
+                Version: ${doc.version}<br>
+                Chunks: ${doc.chunks}
+            </div>
+            <span class="status-pill ${statusClass}">${status.toUpperCase()}</span>
+            ${doc.error_message ? `<div class="error-text">Error: ${doc.error_message}</div>` : ""}
+        `;
                 list.appendChild(div);
             });
+        }
 
-            toggleAllDocuments();
+
+
+        function updateSelectedDocument(documentId, checked) {
+            if (checked) {
+                selectedDocumentIds.add(documentId);
+            } else {
+                selectedDocumentIds.delete(documentId);
+            }
         }
 
         function getStatusClass(status) {
@@ -1176,26 +1197,22 @@
 
         function toggleAllDocuments() {
             const selectAll = document.getElementById("selectAllDocs").checked;
-            const checks = document.querySelectorAll(".doc-check");
 
-            checks.forEach(check => {
-                const docId = parseInt(check.value);
-                const doc = documents.find(d => d.document_id === docId);
-                check.checked = false;
-                if (!doc || !isReady(doc)) {
-                    check.disabled = true;
-                } else {
-                    check.disabled = selectAll;
-                }
-            });
+            if (selectAll) {
+                selectedDocumentIds.clear();
+            }
+
+            renderDocuments();
         }
 
         function getSelectedDocumentIds() {
             const selectAll = document.getElementById("selectAllDocs").checked;
-            if (selectAll) return [];
-            const selected = [];
-            document.querySelectorAll(".doc-check:checked").forEach(check => selected.push(parseInt(check.value)));
-            return selected;
+
+            if (selectAll) {
+                return [];
+            }
+
+            return Array.from(selectedDocumentIds);
         }
 
         function hasReadyDocuments() {
@@ -1288,7 +1305,7 @@
                 if (!validateBeforeSend(question)) return;
             }
 
-            const selectedDocumentIds = getSelectedDocumentIds();
+            const selectedIds = getSelectedDocumentIds();
             addMessage("You", question, "user");
             input.value = "";
             sendBtn.disabled = true;
@@ -1304,7 +1321,7 @@
                         body: JSON.stringify({
                             question: question,
                             session_id: currentSessionId,
-                            document_ids: selectedDocumentIds
+                            document_ids: selectedIds
                         })
                     });
                 } else {
@@ -1477,6 +1494,10 @@
 
         function newChat() {
             currentSessionId = null;
+            selectedDocumentIds.clear();
+            if (assistantMode === "knowledge" && documents.length > 0) {
+                renderDocuments();
+            }
 
             const title = assistantMode === "database"
                 ? "Ask your database"
