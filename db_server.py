@@ -1,8 +1,8 @@
+from database import get_db_connection
 import os
 import re
 import time
 import json
-import psycopg2
 import requests
 from db_config import (
     DB_HOST,
@@ -18,29 +18,15 @@ from db_config import (
 
 
 # ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
-class DatabaseConnection:
-    def get_connection(self):
-        return psycopg2.connect(
-            host=DB_HOST,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
-
-
-# ============================================================
 # SCHEMA READER
 # ============================================================
 
 class SchemaReader:
     def __init__(self):
-        self.db = DatabaseConnection()
+        pass
 
     def read_schema(self):
-        conn = self.db.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         tables = self._read_tables(cursor)
@@ -392,10 +378,10 @@ class SQLValidator:
 
 class SQLExecutor:
     def __init__(self):
-        self.db = DatabaseConnection()
+        pass
 
     def execute(self, sql):
-        conn = self.db.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         try:

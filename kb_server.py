@@ -1,13 +1,10 @@
 from db_server import database_assistant
 from fastapi import FastAPI, Request, BackgroundTasks, Response, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-import psycopg2
 from psycopg2.extras import execute_values
 import requests
 import os
 import shutil
-import hashlib
 import re
 import csv
 import threading
@@ -18,11 +15,24 @@ import fitz
 from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
-from db_config import (
-    DB_HOST,
-    DB_NAME,
-    DB_USER,
-    DB_PASSWORD
+
+from database import get_db_connection
+
+from models import (
+    RetrieveRequest,
+    ChatRequest,
+    DBChatRequest,
+    LoginRequest,
+    FolderRequest
+)
+
+from auth import (
+    hash_password,
+    is_allowed_employee_email,
+    verify_employee_locally,
+    verify_employee_from_company_system,
+    get_session_token,
+    require_login
 )
 
 from kb_config import (
@@ -61,174 +71,6 @@ app = FastAPI()
 # ============================================================
 
 scan_lock = threading.Lock()
-
-
-# ============================================================
-# REQUEST MODELS
-# ============================================================
-
-class RetrieveRequest(BaseModel):
-    question: str
-    document_ids: list[int] = []
-
-
-class ChatRequest(BaseModel):
-    question: str
-    session_id: int | None = None
-    document_ids: list[int] = []
-
-class DBChatRequest(BaseModel):
-    question: str
-    session_id: int | None = None
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class FolderRequest(BaseModel):
-    folder_path: str
-
-
-# ============================================================
-# DATABASE HELPERS
-# ============================================================
-
-def get_db_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
-
-
-def hash_password(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-
-# ============================================================
-# AUTH HELPERS
-# ============================================================
-
-def is_allowed_employee_email(email):
-    email = email.strip().lower()
-    return any(email.endswith(domain) for domain in ALLOWED_EMPLOYEE_EMAIL_DOMAINS)
-
-
-def verify_employee_locally(email, password):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT employee_id, name, email, role, department
-        FROM employees
-        WHERE email = %s
-          AND password_hash = %s
-          AND is_active = TRUE
-        """,
-        (
-            email,
-            hash_password(password)
-        )
-    )
-
-    row = cursor.fetchone()
-
-    cursor.close()
-    conn.close()
-
-    if not row:
-        return None
-
-    return {
-        "employee_id": row[0],
-        "name": row[1],
-        "email": row[2],
-        "role": row[3],
-        "department": row[4]
-    }
-
-
-def verify_employee_from_company_system(email, password):
-    if not COMPANY_EMPLOYEE_VERIFY_URL:
-        raise HTTPException(
-            status_code=500,
-            detail="Company employee verification API is not configured."
-        )
-
-    try:
-        response = requests.post(
-            COMPANY_EMPLOYEE_VERIFY_URL,
-            json={
-                "email": email,
-                "password": password
-            },
-            timeout=30
-        )
-    except Exception:
-        return None
-
-    if response.status_code != 200:
-        return None
-
-    data = response.json()
-
-    if not data.get("valid"):
-        return None
-
-    return {
-        "employee_id": data.get("employee_id"),
-        "name": data.get("name"),
-        "email": data.get("email"),
-        "role": data.get("role", "employee"),
-        "department": data.get("department")
-    }
-
-
-def get_session_token(request: Request):
-    return request.cookies.get("kb_session_token")
-
-
-def require_login(request: Request):
-    token = get_session_token(request)
-
-    if not token:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT e.employee_id, e.name, e.email, e.role, e.department
-        FROM employee_sessions s
-        JOIN employees e
-        ON s.employee_id = e.employee_id
-        WHERE s.session_token = %s
-          AND e.is_active = TRUE
-        """,
-        (token,)
-    )
-
-    row = cursor.fetchone()
-
-    cursor.close()
-    conn.close()
-
-    if not row:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    return {
-        "employee_id": row[0],
-        "name": row[1],
-        "email": row[2],
-        "role": row[3],
-        "department": row[4]
-    }
-
 
 # ============================================================
 # SCHEMA SETUP
@@ -2601,7 +2443,7 @@ def chat(
             "session_id": session_id,
             "answer": answer,
             "search_scope": "general_greeting",
-            "document_ids": req-uest_data.document_ids,
+            "document_ids": request_data.document_ids,
             "sources": []
         }
 
