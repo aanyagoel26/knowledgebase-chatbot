@@ -1364,46 +1364,64 @@ def merge_retrieval_results(vector_rows, keyword_rows):
 
 def rerank_chunks(chunks, question):
     question_words = set(tokenize(question))
+    question_text = question.lower().strip()
 
     reranked = []
 
     for chunk in chunks:
+        content = chunk["content"]
+        content_lower = content.lower()
+        content_words = set(tokenize(content))
 
-        content_words = set(
-            tokenize(chunk["content"])
-        )
-
-        keyword_hits = len(
-            question_words.intersection(content_words)
-        )
+        keyword_hits = len(question_words.intersection(content_words))
+        keyword_coverage = keyword_hits / max(1, len(question_words))
 
         vector_score = 1 / (1 + chunk["vector_distance"])
 
         source_bonus = 0
 
         if chunk["from_vector"]:
-            source_bonus += 0.5
+            source_bonus += 0.4
 
         if chunk["from_keyword"]:
-            source_bonus += 1.0
+            source_bonus += 0.8
 
         exact_phrase_bonus = 0
 
-        if question.lower().strip() in chunk["content"].lower():
+        if question_text and question_text in content_lower:
             exact_phrase_bonus = 3.0
+
+        title_like_bonus = 0
+
+        if keyword_coverage >= 0.6:
+            title_like_bonus = 1.5
+
+        penalty = 0
+
+        if keyword_coverage < 0.25:
+            penalty += 2.0
 
         final_score = (
             keyword_hits
+            + keyword_coverage
             + vector_score
             + source_bonus
             + exact_phrase_bonus
+            + title_like_bonus
+            - penalty
         )
 
         chunk["keyword_hits"] = keyword_hits
+        chunk["keyword_coverage"] = keyword_coverage
         chunk["vector_score"] = vector_score
         chunk["final_score"] = final_score
 
         reranked.append(chunk)
+
+    reranked = [
+        chunk for chunk in reranked
+        if chunk["keyword_coverage"] >= 0.25 or chunk["final_score"] >= 2.5
+    ]
 
     reranked.sort(
         key=lambda item: item["final_score"],
@@ -2455,9 +2473,10 @@ def chat(
     if not chunks:
 
         answer = (
-            "No ready and relevant knowledge base content was found "
-            "for the selected document scope."
-        )
+            "I could not find reliable information for this question "
+            "in the indexed documents. Please try selecting the correct document "
+            "or rephrasing the question."
+            )
 
         save_message(
             session_id,
