@@ -18,71 +18,43 @@ import fitz
 from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
-
-app = FastAPI()
-
-
-# ============================================================
-# DATABASE CONFIG
-# ============================================================
-
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_NAME = os.getenv("DB_NAME", "kb_chatbot")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "Aanya2612")
-
-
-# ============================================================
-# MODEL CONFIG
-# ============================================================
-
-CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2.5:7b")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-
-
-# ============================================================
-# APP CONFIG
-# ============================================================
-
-DEFAULT_KNOWLEDGE_BASE_FOLDER = "knowledge_base"
-KNOWLEDGE_BASE_FOLDER = DEFAULT_KNOWLEDGE_BASE_FOLDER
-UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
-UI_FILE = "kb_chat.html"
-
-AUTO_SCAN_INTERVAL_SECONDS = 3600
-
-MAX_CHUNK_SIZE = 1500
-CHUNK_OVERLAP = 200
-
-PER_DOCUMENT_VECTOR_TOP_K = 6
-PER_DOCUMENT_KEYWORD_TOP_K = 6
-PER_DOCUMENT_DIRECT_TOP_K = 2
-PER_DOCUMENT_CONTEXT_LIMIT = 5
-
-NEIGHBOR_WINDOW = 1
-MAX_CONTEXT_CHUNKS_TOTAL = 14
-
-EMBEDDING_BATCH_SIZE = 32
-
-
-# ============================================================
-# AUTH CONFIG
-# ============================================================
-
-AUTH_MODE = os.getenv("AUTH_MODE", "local")
-# local   = demo mode using employees table
-# company = production mode using company employee verification API
-
-COMPANY_EMPLOYEE_VERIFY_URL = os.getenv(
-    "COMPANY_EMPLOYEE_VERIFY_URL",
-    ""
+from db_config import (
+    DB_HOST,
+    DB_NAME,
+    DB_USER,
+    DB_PASSWORD
 )
 
-ALLOWED_EMPLOYEE_EMAIL_DOMAINS = [
-    "@motherson.com",
-    "@mtsl.com"
-]
+from kb_config import (
+    CHAT_MODEL,
+    EMBEDDING_MODEL,
+    AUTO_SCAN_INTERVAL_SECONDS,
+    MAX_CHUNK_SIZE,
+    CHUNK_OVERLAP,
+    PER_DOCUMENT_VECTOR_TOP_K,
+    PER_DOCUMENT_KEYWORD_TOP_K,
+    PER_DOCUMENT_DIRECT_TOP_K,
+    PER_DOCUMENT_CONTEXT_LIMIT,
+    NEIGHBOR_WINDOW,
+    MAX_CONTEXT_CHUNKS_TOTAL,
+    EMBEDDING_BATCH_SIZE
+)
 
+from auth_config import (
+    AUTH_MODE,
+    COMPANY_EMPLOYEE_VERIFY_URL,
+    ALLOWED_EMPLOYEE_EMAIL_DOMAINS
+)
+
+from app_config import (
+    DEFAULT_KNOWLEDGE_BASE_FOLDER,
+    UI_FILE
+)
+
+KNOWLEDGE_BASE_FOLDER = DEFAULT_KNOWLEDGE_BASE_FOLDER
+UPLOAD_FOLDER = KNOWLEDGE_BASE_FOLDER
+
+app = FastAPI()
 
 # ============================================================
 # GLOBAL LOCKS

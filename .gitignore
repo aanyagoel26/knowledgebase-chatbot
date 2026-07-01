@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific local files
+knowledge_base/
+uploads/
+*.pdf
+*.docx
+*.pptx
+*.xlsx
+*.csv
+
+# Local database / backups
+*.sql
+*.dump
+*.backup
+
+# Runtime logs
+logs/
