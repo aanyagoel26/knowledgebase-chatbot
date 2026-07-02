@@ -4,11 +4,7 @@ import re
 import time
 import json
 import requests
-from db_config import (
-    DB_HOST,
-    DB_NAME,
-    DB_USER,
-    DB_PASSWORD,
+from app.config.settings import (
     CHAT_MODEL,
     OLLAMA_CHAT_URL,
     MAX_ROWS,

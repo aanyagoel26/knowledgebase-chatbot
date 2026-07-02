@@ -37,7 +37,7 @@ from auth import (
     require_login
 )
 
-from kb_config import (
+from app.config.settings import (
     CHAT_MODEL,
     EMBEDDING_MODEL,
     AUTO_SCAN_INTERVAL_SECONDS,
@@ -52,14 +52,14 @@ from kb_config import (
     EMBEDDING_BATCH_SIZE
 )
 
-from auth_config import (
+from app.config.settings import (
     AUTH_MODE,
     COMPANY_EMPLOYEE_VERIFY_URL,
     ALLOWED_EMPLOYEE_EMAIL_DOMAINS
 )
 
-from app_config import (
-    DEFAULT_KNOWLEDGE_BASE_FOLDER,
+from app.config.settings import (
+    KNOWLEDGE_BASE_FOLDER as DEFAULT_KNOWLEDGE_BASE_FOLDER,
     UI_FILE
 )
 

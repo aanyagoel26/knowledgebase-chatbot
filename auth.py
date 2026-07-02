@@ -5,7 +5,7 @@ from fastapi import Request, HTTPException
 
 from database import get_db_connection
 
-from auth_config import (
+from app.config.settings import (
     AUTH_MODE,
     COMPANY_EMPLOYEE_VERIFY_URL,
     ALLOWED_EMPLOYEE_EMAIL_DOMAINS
