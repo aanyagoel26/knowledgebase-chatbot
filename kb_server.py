@@ -16,6 +16,7 @@ import fitz
 from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
+import json
 
 from database import get_db_connection
 
@@ -153,6 +154,11 @@ def ensure_schema_updates():
         );
         """
     )
+
+    cursor.execute("""
+        ALTER TABLE chat_messages
+        ADD COLUMN IF NOT EXISTS sources_json TEXT;
+    """)
 
     cursor.execute(
         """
@@ -357,9 +363,14 @@ def get_file_metadata(file_path):
 
 
 def clean_text(text):
+    if not text:
+        return ""
+
+    text = text.replace("\x00", "")
     text = text.replace("\r", "")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
+
     return text.strip()
 
 
@@ -938,6 +949,7 @@ def process_document_indexing(document_id, file_path):
         )
 
         extracted_text = extract_text(file_path)
+        extracted_text = clean_text(extracted_text)
 
         chunks = split_text_into_chunks(extracted_text)
 
@@ -1611,51 +1623,60 @@ def retrieve_document_summary_chunks(document_ids):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    placeholders = ",".join(["%s"] * len(document_ids))
+    chunks = []
 
-    cursor.execute(
-        f"""
-        SELECT
-            c.chunk_id,
-            c.document_id,
-            d.original_filename,
-            c.chunk_number,
-            c.content
-        FROM document_chunks c
-        JOIN documents d
-        ON c.document_id = d.document_id
-        WHERE c.document_id IN ({placeholders})
-          AND d.indexing_status = 'ready'
-        ORDER BY c.document_id, c.chunk_number
-        LIMIT %s
-        """,
-        document_ids + [MAX_CONTEXT_CHUNKS_TOTAL]
+    per_document_limit = max(
+        2,
+        MAX_CONTEXT_CHUNKS_TOTAL // max(1, len(document_ids))
     )
 
-    rows = cursor.fetchall()
+    for document_id in document_ids:
+        cursor.execute(
+            """
+            SELECT
+                c.chunk_id,
+                c.document_id,
+                d.original_filename,
+                c.chunk_number,
+                c.content
+            FROM document_chunks c
+            JOIN documents d
+            ON c.document_id = d.document_id
+            WHERE c.document_id = %s
+              AND d.indexing_status = 'ready'
+              AND c.content IS NOT NULL
+              AND LENGTH(TRIM(c.content)) > 30
+            ORDER BY c.chunk_number ASC
+            LIMIT %s
+            """,
+            (
+                document_id,
+                per_document_limit
+            )
+        )
+
+        rows = cursor.fetchall()
+
+        for row in rows:
+            chunks.append(
+                {
+                    "chunk_id": row[0],
+                    "document_id": row[1],
+                    "filename": row[2],
+                    "chunk_number": row[3],
+                    "content": row[4],
+                    "vector_distance": 0,
+                    "from_vector": False,
+                    "from_keyword": False,
+                    "retrieval_type": "document_summary",
+                    "keyword_hits": 0,
+                    "vector_score": 0,
+                    "final_score": 10
+                }
+            )
 
     cursor.close()
     conn.close()
-
-    chunks = []
-
-    for row in rows:
-        chunks.append(
-            {
-                "chunk_id": row[0],
-                "document_id": row[1],
-                "filename": row[2],
-                "chunk_number": row[3],
-                "content": row[4],
-                "vector_distance": 0,
-                "from_vector": False,
-                "from_keyword": False,
-                "retrieval_type": "document_summary",
-                "keyword_hits": 0,
-                "vector_score": 0,
-                "final_score": 10
-            }
-        )
 
     return chunks
 
@@ -1713,24 +1734,24 @@ def create_session_if_needed(session_id, first_question, employee_id, assistant_
     return new_session_id
 
 
-def save_message(session_id, role, message):
+def save_message(session_id, role, message, sources=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        INSERT INTO chat_messages(session_id, role, message)
-        VALUES (%s,%s,%s)
+        INSERT INTO chat_messages(session_id, role, message, sources_json)
+        VALUES (%s,%s,%s,%s)
         """,
         (
             session_id,
             role,
-            message
+            message,
+            json.dumps(sources) if sources else None
         )
     )
-
+    
     conn.commit()
-
     cursor.close()
     conn.close()
 
@@ -1767,6 +1788,7 @@ Rules:
 - Do not guess missing facts.
 - Do not invent names, numbers, dates, policies, rules, or facts.
 - If multiple documents are provided, consider all documents.
+- If multiple selected documents are provided for summary, summarize each document separately under its file name.
 - Do not ignore a document unless no relevant content from that document is present.
 - If different documents provide different information, mention it document-wise.
 - If multiple related points are present, include all relevant points.
@@ -2414,6 +2436,54 @@ def get_documents(request: Request):
         "documents": documents
     }
 
+# ============================================================
+# ROUTES: DOCUMENTS/CLEAR
+# ============================================================
+
+@app.delete("/documents/clear")
+def clear_all_documents(request: Request):
+
+    require_login(request)
+
+    if scan_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Indexing is currently running. Please wait until it finishes."
+        )
+
+    deleted_files = 0
+
+    if os.path.isdir(KNOWLEDGE_BASE_FOLDER):
+        for root, dirs, files in os.walk(KNOWLEDGE_BASE_FOLDER):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+
+                if is_supported_file(file_path) or filename.startswith(".uploading_"):
+                    try:
+                        os.remove(file_path)
+                        deleted_files += 1
+                    except Exception:
+                        pass
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        TRUNCATE TABLE document_chunks, documents
+        RESTART IDENTITY CASCADE;
+        """
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return {
+        "message": "All documents, indexed chunks, and uploaded files have been cleared.",
+        "deleted_files": deleted_files
+    }
+
 
 # ============================================================
 # ROUTES: DOWNLOAD DOCUMENT
@@ -2519,9 +2589,9 @@ def retrieve(
 def chat(
         request_data: ChatRequest,
         request: Request):
-    
+
     employee = require_login(request)
-    
+
     session_id = create_session_if_needed(
         request_data.session_id,
         request_data.question,
@@ -2542,7 +2612,8 @@ def chat(
         save_message(
             session_id,
             "assistant",
-            answer
+            answer,
+            []
         )
 
         return {
@@ -2553,10 +2624,15 @@ def chat(
             "sources": []
         }
 
-    chunks = retrieve_relevant_chunks(
-        request_data.question,
-        request_data.document_ids
-    )
+    if request_data.document_ids and is_summary_question(request_data.question):
+        chunks = retrieve_document_summary_chunks(
+            request_data.document_ids
+        )
+    else:
+        chunks = retrieve_relevant_chunks(
+            request_data.question,
+            request_data.document_ids
+        )
 
     if not chunks:
 
@@ -2564,17 +2640,24 @@ def chat(
             "I could not find reliable information for this question "
             "in the indexed documents. Please try selecting the correct document "
             "or rephrasing the question."
-            )
+        )
 
         save_message(
             session_id,
             "assistant",
-            answer
+            answer,
+            []
         )
 
         return {
             "session_id": session_id,
             "answer": answer,
+            "search_scope": (
+                "selected_documents"
+                if request_data.document_ids
+                else "all_ready_documents"
+            ),
+            "document_ids": request_data.document_ids,
             "sources": []
         }
 
@@ -2583,16 +2666,9 @@ def chat(
         chunks
     )
 
-    save_message(
-        session_id,
-        "assistant",
-        answer
-    )
-
     unique_sources = {}
 
     for chunk in chunks:
-
         unique_sources[chunk["document_id"]] = {
             "document_id": chunk["document_id"],
             "filename": chunk["filename"],
@@ -2600,6 +2676,15 @@ def chat(
                 f"/download-document/{chunk['document_id']}"
             )
         }
+
+    sources_list = list(unique_sources.values())
+
+    save_message(
+        session_id,
+        "assistant",
+        answer,
+        sources_list
+    )
 
     return {
         "session_id": session_id,
@@ -2610,7 +2695,7 @@ def chat(
             else "all_ready_documents"
         ),
         "document_ids": request_data.document_ids,
-        "sources": list(unique_sources.values())
+        "sources": sources_list
     }
 
 # ============================================================
@@ -2743,7 +2828,8 @@ def get_session_messages(
         SELECT
             role,
             message,
-            created_at
+            created_at,
+            sources_json
         FROM chat_messages
         WHERE session_id=%s
         ORDER BY created_at ASC
@@ -2759,11 +2845,20 @@ def get_session_messages(
     messages = []
 
     for row in rows:
+        sources = []
+
+        if row[3]:
+            try:
+                sources = json.loads(row[3])
+            except Exception:
+                sources = []
+
         messages.append(
             {
                 "role": row[0],
                 "message": row[1],
-                "created_at": str(row[2])
+                "created_at": str(row[2]),
+                "sources": sources
             }
         )
 

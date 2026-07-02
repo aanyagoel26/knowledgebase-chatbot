@@ -274,9 +274,16 @@
         }
 
         .doc-name {
+            color: #111827;
+            text-decoration: none;
             font-weight: 700;
             font-size: 13px;
             word-break: break-word;
+        }
+
+        .doc-name:hover {
+            color: var(--red);
+            text-decoration: underline;
         }
 
         .doc-meta {
@@ -385,6 +392,29 @@
             justify-content: space-between;
             padding: 0 24px;
             background: white;
+        }
+
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sidebar-toggle-btn {
+            width: auto;
+            background: white;
+            color: #374151;
+            border: 1px solid var(--border);
+            padding: 7px 10px;
+            border-radius: 10px;
+            font-weight: 800;
+        }
+
+        .sidebar-toggle-btn:hover {
+            background: var(--red-soft);
+            color: var(--red);
+            border-color: var(--red);
         }
 
         .topbar-title {
@@ -754,6 +784,7 @@
                         </div>
 
                         <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh Documents</button>
+                        <button class="small-btn outline-btn" onclick="clearAllDocuments()">Clear All Documents</button>
                         <div id="documentsList"></div>
                     </div>
                 </div>
@@ -802,7 +833,10 @@
 
         <div class="main">
             <div class="topbar">
-                <div class="topbar-title">Motherson Knowledge Assistant</div>
+                <div class="topbar-left">
+                    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+                    <div class="topbar-title">Motherson Knowledge Assistant</div>
+                </div>
 
                 <div class="mode-toggle">
                     <button id="knowledgeModeBtn" class="active" onclick="setAssistantMode('knowledge')">
@@ -852,6 +886,19 @@
             toast.innerText = message;
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 4000);
+        }
+
+
+        function toggleSidebar() {
+            const sidebar = document.querySelector(".sidebar");
+
+            if (!sidebar) return;
+
+            if (sidebar.style.display === "none") {
+                sidebar.style.display = "flex";
+            } else {
+                sidebar.style.display = "none";
+            }
         }
 
         function setAssistantMode(mode) {
@@ -1075,13 +1122,19 @@
             try {
                 const response = await fetch("/index-status");
                 if (!response.ok) return;
+
                 const data = await response.json();
 
                 if (data.running) {
                     wasIndexing = true;
-                    document.getElementById("systemStatus").innerText = `Indexing... Pending: ${data.pending}, Running: ${data.indexing}`;
+
+                    document.getElementById("systemStatus").innerText =
+                        `Indexing... Pending: ${data.pending}, Running: ${data.indexing}`;
+
+                    await loadDocuments();
                 } else {
                     document.getElementById("systemStatus").innerText = "Connected";
+
                     if (wasIndexing) {
                         showToast("Indexing completed. Documents are ready.", "success");
                         wasIndexing = false;
@@ -1090,10 +1143,13 @@
                 }
             } catch { }
         }
-
         function startIndexStatusPolling() {
-            if (indexStatusTimer) return;
-            indexStatusTimer = setInterval(checkIndexStatus, 5000);
+            if (indexStatusTimer) {
+                clearInterval(indexStatusTimer);
+            }
+
+            checkIndexStatus();
+            indexStatusTimer = setInterval(checkIndexStatus, 3000);
         }
 
         function startAutoRefresh() {
@@ -1125,6 +1181,40 @@
             } catch { }
         }
 
+
+        async function clearAllDocuments() {
+            const confirmed = confirm(
+                "Are you sure? This will permanently clear all uploaded documents and indexed chunks."
+            );
+
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch("/documents/clear", {
+                    method: "DELETE"
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showToast(data.detail || "Failed to clear documents.", "error");
+                    return;
+                }
+
+                documents = [];
+                selectedDocumentIds.clear();
+
+                document.getElementById("documentCount").innerText = "0";
+                document.getElementById("documentsList").innerHTML =
+                    "<div class='empty-state'>No documents found.</div>";
+
+                showToast(data.message, "success");
+
+            } catch {
+                showToast("Failed to clear documents.", "error");
+            }
+        }
+
         function renderDocuments() {
             const list = document.getElementById("documentsList");
             const search = document.getElementById("docSearchInput").value.toLowerCase();
@@ -1151,24 +1241,26 @@
 
                 const div = document.createElement("div");
                 div.className = "doc-item";
+
                 div.innerHTML = `
-            <label>
-                <input type="checkbox"
-                       class="doc-check"
-                       value="${doc.document_id}"
-                       ${checked}
-                       ${disabled}
-                       onchange="updateSelectedDocument(${doc.document_id}, this.checked)">
-                <span class="doc-name">${doc.filename}</span>
-            </label>
-            <div class="doc-meta">
-                ID: ${doc.document_id}<br>
-                Version: ${doc.version}<br>
-                Chunks: ${doc.chunks}
-            </div>
-            <span class="status-pill ${statusClass}">${status.toUpperCase()}</span>
-            ${doc.error_message ? `<div class="error-text">Error: ${doc.error_message}</div>` : ""}
-        `;
+                    <label>
+                        <input type="checkbox"
+                               class="doc-check"
+                               value="${doc.document_id}"
+                               ${checked}
+                               ${disabled}
+                               onchange="updateSelectedDocument(${doc.document_id}, this.checked)">
+                        <a class="doc-name"
+                           href="/download-document/${doc.document_id}"
+                           target="_blank"
+                           title="Open document">
+                           ${doc.filename}
+                        </a>
+                    </label>
+                    <span class="status-pill ${statusClass}">${status.toUpperCase()}</span>
+                    ${doc.error_message ? `<div class="error-text">Error: ${doc.error_message}</div>` : ""}
+                `;
+
                 list.appendChild(div);
             });
         }
@@ -1548,17 +1640,23 @@
             try {
                 const response = await fetch(`/sessions/${sessionId}/messages`);
                 if (!response.ok) return;
+
                 const data = await response.json();
                 const chatBox = document.getElementById("chatBox");
                 chatBox.innerHTML = "";
 
                 data.messages.forEach(msg => {
-                    addMessage(
-                        msg.role === "user" ? "You" : "Assistant",
-                        msg.message,
-                        msg.role === "user" ? "user" : "assistant"
-                    );
+                    if (msg.role === "assistant") {
+                        addAssistantAnswer(
+                            msg.message,
+                            msg.sources || [],
+                            {}
+                        );
+                    } else {
+                        addMessage("You", msg.message, "user");
+                    }
                 });
+
             } catch {
                 showToast("Failed to load chat", "error");
             }
