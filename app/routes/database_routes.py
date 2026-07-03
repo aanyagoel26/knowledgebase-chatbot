@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 
-from db_server import database_assistant
+from app.services.database_assistant_service import database_assistant
 from models import DBChatRequest
 from auth import require_login
 
