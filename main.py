@@ -1,0 +1,1 @@
+from kb_server import app
