@@ -1,4 +1,4 @@
-from database import get_db_connection
+from app.database.connection import get_db_connection
 import os
 import re
 import time

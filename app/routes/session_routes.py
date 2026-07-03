@@ -2,7 +2,7 @@ import json
 
 from fastapi import APIRouter, Request, HTTPException
 
-from auth import require_login
+from app.services.auth_service import require_login
 
 from app.database.repository import (
     get_chat_sessions,

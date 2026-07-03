@@ -6,8 +6,8 @@ from fastapi import APIRouter, UploadFile, File, Request, HTTPException, Backgro
 from fastapi.responses import FileResponse
 
 from models import FolderRequest
-from auth import require_login
-from database import get_db_connection
+from app.services.auth_service import require_login
+from app.database.connection import get_db_connection
 
 from app.database.repository import (
     get_all_documents,

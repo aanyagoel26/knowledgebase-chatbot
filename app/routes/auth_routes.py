@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, Response, HTTPException
 from app.database.connection import get_db_connection
 from app.config.settings import AUTH_MODE
 from models import LoginRequest
-from auth import (
+from app.services.auth_service import (
     hash_password,
     is_allowed_employee_email,
     verify_employee_locally,

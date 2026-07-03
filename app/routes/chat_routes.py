@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 
 from models import RetrieveRequest, ChatRequest
 
-from auth import require_login
+from app.services.auth_service import require_login
 
 from app.services.intent_service import (
     detect_intent,
