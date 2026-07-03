@@ -1,8 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, Request, Response, HTTPException
-
-from app.database.connection import get_db_connection
 from app.config.settings import AUTH_MODE
 from models import LoginRequest
 from app.services.auth_service import (
@@ -13,7 +11,11 @@ from app.services.auth_service import (
     get_session_token,
     require_login
 )
-
+from app.database.repository import (
+    upsert_employee_after_login,
+    create_employee_session,
+    logout_employee_session
+)
 router = APIRouter()
 
 
@@ -49,96 +51,18 @@ def login(
         if http_request.client
         else None
     )
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO employees
-        (
-            name,
-            email,
-            password_hash,
-            role,
-            department,
-            is_active
-        )
-        VALUES (%s,%s,%s,%s,%s,TRUE)
-        ON CONFLICT(email)
-        DO UPDATE SET
-            name=EXCLUDED.name,
-            role=EXCLUDED.role,
-            department=EXCLUDED.department,
-            is_active=TRUE
-        RETURNING employee_id
-        """,
-        (
-            employee["name"],
-            employee["email"],
-            "" if AUTH_MODE == "company" else hash_password(request.password),
-            employee.get("role", "employee"),
-            employee.get("department")
-        )
+    
+    employee_id = upsert_employee_after_login(
+        employee,
+        "" if AUTH_MODE == "company" else hash_password(request.password)
     )
 
-    employee_id = cursor.fetchone()[0]
-
-    cursor.execute(
-        """
-        DELETE FROM employee_sessions
-        WHERE employee_id=%s
-        """,
-        (employee_id,)
+    create_employee_session(
+        employee_id,
+        employee["email"],
+        session_token,
+        ip_address
     )
-
-    cursor.execute(
-        """
-        UPDATE employee_login_logs
-        SET logout_time=CURRENT_TIMESTAMP,
-            status='logged_out'
-        WHERE employee_id=%s
-          AND logout_time IS NULL
-        """,
-        (employee_id,)
-    )
-
-    cursor.execute(
-        """
-        INSERT INTO employee_sessions
-        (
-            employee_id,
-            session_token
-        )
-        VALUES (%s,%s)
-        """,
-        (
-            employee_id,
-            session_token
-        )
-    )
-
-    cursor.execute(
-        """
-        INSERT INTO employee_login_logs
-        (
-            employee_id,
-            email,
-            ip_address,
-            status
-        )
-        VALUES (%s,%s,%s,'active')
-        """,
-        (
-            employee_id,
-            employee["email"],
-            ip_address
-        )
-    )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
 
     response.set_cookie(
         key="kb_session_token",
@@ -161,49 +85,7 @@ def logout(request: Request, response: Response):
     token = get_session_token(request)
 
     if token:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT e.employee_id, e.email
-            FROM employee_sessions s
-            JOIN employees e
-            ON s.employee_id=e.employee_id
-            WHERE s.session_token=%s
-            """,
-            (token,)
-        )
-
-        row = cursor.fetchone()
-
-        if row:
-            cursor.execute(
-                """
-                UPDATE employee_login_logs
-                SET logout_time=CURRENT_TIMESTAMP,
-                    status='logged_out'
-                WHERE employee_id=%s
-                  AND email=%s
-                  AND logout_time IS NULL
-                """,
-                (
-                    row[0],
-                    row[1]
-                )
-            )
-
-        cursor.execute(
-            """
-            DELETE FROM employee_sessions
-            WHERE session_token=%s
-            """,
-            (token,)
-        )
-
-        conn.commit()
-        cursor.close()
-        conn.close()
+        logout_employee_session(token)
 
     response.delete_cookie("kb_session_token")
 

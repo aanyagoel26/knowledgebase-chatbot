@@ -14,7 +14,8 @@ from app.database.repository import (
     get_document_by_id,
     clear_document_tables,
     get_index_status_counts,
-    set_app_setting
+    set_app_setting,
+    get_document_by_file_hash
 )
 
 from app.services.document_service import (
@@ -153,22 +154,7 @@ async def upload_files(
 
             uploaded_hash = calculate_file_hash(temp_path)
 
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT document_id, original_filename, indexing_status
-                FROM documents
-                WHERE file_hash=%s
-                """,
-                (uploaded_hash,)
-            )
-
-            existing_duplicate = cursor.fetchone()
-
-            cursor.close()
-            conn.close()
+            existing_duplicate = get_document_by_file_hash(uploaded_hash)
 
             if existing_duplicate:
                 os.remove(temp_path)

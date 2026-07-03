@@ -209,3 +209,151 @@ def get_chat_messages(session_id):
     conn.close()
 
     return rows
+
+def upsert_employee_after_login(employee, password_hash):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO employees
+        (
+            name,
+            email,
+            password_hash,
+            role,
+            department,
+            is_active
+        )
+        VALUES (%s,%s,%s,%s,%s,TRUE)
+        ON CONFLICT(email)
+        DO UPDATE SET
+            name=EXCLUDED.name,
+            role=EXCLUDED.role,
+            department=EXCLUDED.department,
+            is_active=TRUE
+        RETURNING employee_id
+        """,
+        (
+            employee["name"],
+            employee["email"],
+            password_hash,
+            employee.get("role", "employee"),
+            employee.get("department")
+        )
+    )
+
+    employee_id = cursor.fetchone()[0]
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return employee_id
+
+
+def create_employee_session(employee_id, email, session_token, ip_address):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM employee_sessions
+        WHERE employee_id=%s
+        """,
+        (employee_id,)
+    )
+
+    cursor.execute(
+        """
+        UPDATE employee_login_logs
+        SET logout_time=CURRENT_TIMESTAMP,
+            status='logged_out'
+        WHERE employee_id=%s
+          AND logout_time IS NULL
+        """,
+        (employee_id,)
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO employee_sessions(employee_id, session_token)
+        VALUES (%s,%s)
+        """,
+        (employee_id, session_token)
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO employee_login_logs(employee_id, email, ip_address, status)
+        VALUES (%s,%s,%s,'active')
+        """,
+        (employee_id, email, ip_address)
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def logout_employee_session(session_token):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT e.employee_id, e.email
+        FROM employee_sessions s
+        JOIN employees e
+        ON s.employee_id=e.employee_id
+        WHERE s.session_token=%s
+        """,
+        (session_token,)
+    )
+
+    row = cursor.fetchone()
+
+    if row:
+        cursor.execute(
+            """
+            UPDATE employee_login_logs
+            SET logout_time=CURRENT_TIMESTAMP,
+                status='logged_out'
+            WHERE employee_id=%s
+              AND email=%s
+              AND logout_time IS NULL
+            """,
+            (row[0], row[1])
+        )
+
+    cursor.execute(
+        """
+        DELETE FROM employee_sessions
+        WHERE session_token=%s
+        """,
+        (session_token,)
+    )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_document_by_file_hash(file_hash):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT document_id, original_filename, indexing_status
+        FROM documents
+        WHERE file_hash=%s
+        """,
+        (file_hash,)
+    )
+
+    row = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return row
