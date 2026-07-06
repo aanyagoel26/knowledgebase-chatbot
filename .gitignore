@@ -233,3 +233,6 @@ uploads/
 
 # Runtime logs
 logs/
+
+logs/
+*.log

@@ -1,28 +1,32 @@
 from fastapi import APIRouter, Request
-
-from models import RetrieveRequest, ChatRequest
-
+from app.models.request_models import RetrieveRequest, ChatRequest
 from app.services.auth_service import require_login
-
 from app.services.intent_service import (
     detect_intent,
     generate_basic_chat_answer,
     is_basic_chat_intent,
     is_summary_intent
 )
-
 from app.services.retrieval_service import (
     retrieve_relevant_chunks,
     retrieve_document_summary_chunks
 )
-
 from app.services.answer_service import generate_answer
-
 from app.services.session_service import (
     create_session_if_needed,
     save_message
 )
-
+from app.utils.constants import (
+    AssistantMode,
+    SearchScope,
+    DefaultMessage
+)
+from app.utils.constants import (
+    AssistantMode,
+    SearchScope,
+    DefaultMessage,
+    MessageRole
+)
 router = APIRouter()
 
 
@@ -35,7 +39,7 @@ def retrieve(
 
     intent = detect_intent(
         request_data.question,
-        "knowledge"
+        AssistantMode.KNOWLEDGE
     )
 
     if request_data.document_ids and is_summary_intent(intent):
@@ -52,9 +56,9 @@ def retrieve(
         "question": request_data.question,
         "document_ids": request_data.document_ids,
         "search_scope": (
-            "selected_documents"
+            SearchScope.SELECTED_DOCUMENTS
             if request_data.document_ids
-            else "all_ready_documents"
+            else SearchScope.ALL_READY_DOCUMENTS
         ),
         "chunks": [
             {
@@ -85,30 +89,30 @@ def chat(
         request_data.session_id,
         request_data.question,
         employee["employee_id"],
-        "knowledge"
+        AssistantMode.KNOWLEDGE
     )
 
     save_message(
         session_id,
-        "user",
+        MessageRole.USER,
         request_data.question
     )
 
     intent = detect_intent(
         request_data.question,
-        "knowledge"
+        AssistantMode.KNOWLEDGE
     )
 
     if is_basic_chat_intent(intent):
 
         answer = generate_basic_chat_answer(
             request_data.question,
-            "knowledge"
+            AssistantMode.KNOWLEDGE
         )
 
         save_message(
             session_id,
-            "assistant",
+            MessageRole.ASSISTANT,
             answer,
             []
         )
@@ -116,7 +120,7 @@ def chat(
         return {
             "session_id": session_id,
             "answer": answer,
-            "search_scope": "basic_chat",
+            "search_scope": SearchScope.BASIC_CHAT,
             "document_ids": request_data.document_ids,
             "sources": []
         }
@@ -133,15 +137,11 @@ def chat(
 
     if not chunks:
 
-        answer = (
-            "I could not find reliable information for this question "
-            "in the indexed documents. Please try selecting the correct document "
-            "or rephrasing the question."
-        )
+        answer = DefaultMessage.NO_RELIABLE_INFORMATION
 
         save_message(
             session_id,
-            "assistant",
+            MessageRole.ASSISTANT,
             answer,
             []
         )
@@ -150,9 +150,9 @@ def chat(
             "session_id": session_id,
             "answer": answer,
             "search_scope": (
-                "selected_documents"
+                SearchScope.SELECTED_DOCUMENTS
                 if request_data.document_ids
-                else "all_ready_documents"
+                else SearchScope.ALL_READY_DOCUMENTS
             ),
             "document_ids": request_data.document_ids,
             "sources": []
@@ -178,7 +178,7 @@ def chat(
 
     save_message(
         session_id,
-        "assistant",
+        MessageRole.ASSISTANT,
         answer,
         sources_list
     )
@@ -187,9 +187,9 @@ def chat(
         "session_id": session_id,
         "answer": answer,
         "search_scope": (
-            "selected_documents"
+            SearchScope.SELECTED_DOCUMENTS
             if request_data.document_ids
-            else "all_ready_documents"
+            else SearchScope.ALL_READY_DOCUMENTS
         ),
         "document_ids": request_data.document_ids,
         "sources": sources_list

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Request
 
-from app.services.database_assistant_service import database_assistant
-from models import DBChatRequest
+from app.models.request_models import DBChatRequest
 from app.services.auth_service import require_login
-
+from app.services.database_assistant_service import database_assistant
+from app.utils.constants import AssistantMode, MessageRole
 from app.services.intent_service import (
     detect_intent,
     generate_basic_chat_answer,
@@ -14,6 +14,9 @@ from app.services.session_service import (
     create_session_if_needed,
     save_message
 )
+
+from app.utils.constants import AssistantMode
+
 
 router = APIRouter()
 
@@ -29,30 +32,30 @@ def db_chat(
         request_data.session_id,
         request_data.question,
         employee["employee_id"],
-        "database"
+        AssistantMode.DATABASE
     )
 
     save_message(
         session_id,
-        "user",
+        MessageRole.USER,
         request_data.question
     )
 
     intent = detect_intent(
         request_data.question,
-        "database"
+        AssistantMode.DATABASE
     )
 
     if is_basic_chat_intent(intent):
 
         answer = generate_basic_chat_answer(
             request_data.question,
-            "database"
+            AssistantMode.DATABASE
         )
 
         save_message(
             session_id,
-            "assistant",
+            MessageRole.ASSISTANT,
             answer,
             []
         )
@@ -72,7 +75,7 @@ def db_chat(
 
     save_message(
         session_id,
-        "assistant",
+        MessageRole.ASSISTANT,
         result["answer"],
         []
     )

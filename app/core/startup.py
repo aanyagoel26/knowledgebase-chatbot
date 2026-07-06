@@ -1,6 +1,6 @@
 import os
 import threading
-
+from app.core.logger import logger
 from app.config.settings import (
     AUTO_SCAN_INTERVAL_SECONDS,
     KNOWLEDGE_BASE_FOLDER as DEFAULT_KNOWLEDGE_BASE_FOLDER
@@ -34,8 +34,8 @@ def startup_event():
     print("\n" + "=" * 80)
     print("KB CHATBOT STARTED")
     print("=" * 80)
-    print("Knowledge folder:", os.path.abspath(get_knowledge_base_folder()))
-    print("Automatic scan interval:", AUTO_SCAN_INTERVAL_SECONDS, "seconds")
+    logger.info("Knowledge folder: %s", os.path.abspath(get_knowledge_base_folder()))
+    logger.info("Automatic scan interval: %s seconds", AUTO_SCAN_INTERVAL_SECONDS)
 
     watcher_thread = threading.Thread(
         target=hourly_knowledge_base_watcher,

@@ -4,7 +4,9 @@ import time
 
 from psycopg2.extras import execute_values
 
+from app.core.logger import logger
 from app.database.connection import get_db_connection
+from app.utils.constants import DocumentStatus, SourceType
 from app.config.settings import (
     AUTO_SCAN_INTERVAL_SECONDS,
     EMBEDDING_BATCH_SIZE
@@ -56,7 +58,7 @@ def update_document_status(
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    if status == "ready":
+    if status == DocumentStatus.READY:
         cursor.execute(
             """
             UPDATE documents
@@ -80,7 +82,7 @@ def update_document_status(
             UPDATE documents
             SET indexing_status=%s,
                 error_message=%s,
-                chunk_count=COALESCE(%s,chunk_count),
+                chunk_count=COALESCE(%s, chunk_count),
                 updated_at=CURRENT_TIMESTAMP
             WHERE document_id=%s
             """,
@@ -140,7 +142,7 @@ def queue_file_for_indexing(
             and old_size == metadata["file_size"]
         )
 
-        if unchanged and old_status == "ready" and not force_reindex:
+        if unchanged and old_status == DocumentStatus.READY and not force_reindex:
             cursor.close()
             conn.close()
 
@@ -152,7 +154,7 @@ def queue_file_for_indexing(
                 "scheduled": False
             }
 
-        if old_status in ["pending", "indexing"]:
+        if old_status in [DocumentStatus.PENDING, DocumentStatus.INDEXING]:
             cursor.close()
             conn.close()
 
@@ -242,7 +244,7 @@ def queue_file_for_indexing(
             chunk_count
         )
         VALUES
-        (%s,%s,%s,%s,%s,%s,'pending',0)
+        (%s, %s, %s, %s, %s, %s, 'pending', 0)
         RETURNING document_id
         """,
         (
@@ -271,11 +273,11 @@ def queue_file_for_indexing(
 
 
 def process_document_indexing(document_id, file_path):
-    print("\n" + "=" * 80)
-    print("BACKGROUND INDEXING STARTED")
-    print("=" * 80)
-    print("Document ID:", document_id)
-    print("File:", file_path)
+    logger.info("=" * 80)
+    logger.info("BACKGROUND INDEXING STARTED")
+    logger.info("=" * 80)
+    logger.info("Document ID: %s", document_id)
+    logger.info("File: %s", file_path)
 
     try:
         if not os.path.exists(file_path):
@@ -283,7 +285,7 @@ def process_document_indexing(document_id, file_path):
 
         update_document_status(
             document_id=document_id,
-            status="indexing",
+            status=DocumentStatus.INDEXING,
             error_message=None,
             chunk_count=0
         )
@@ -293,8 +295,8 @@ def process_document_indexing(document_id, file_path):
 
         chunks = split_text_into_chunks(extracted_text)
 
-        print("Characters extracted:", len(extracted_text))
-        print("Chunks created:", len(chunks))
+        logger.info("Characters extracted: %d", len(extracted_text))
+        logger.info("Chunks created: %d", len(chunks))
 
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -314,12 +316,10 @@ def process_document_indexing(document_id, file_path):
                 batch_start:batch_start + EMBEDDING_BATCH_SIZE
             ]
 
-            print(
-                "Embedding batch",
+            logger.info(
+                "Embedding batch %d to %d of %d",
                 batch_start + 1,
-                "to",
                 batch_start + len(batch_chunks),
-                "of",
                 len(chunks)
             )
 
@@ -355,7 +355,7 @@ def process_document_indexing(document_id, file_path):
                 VALUES %s
                 """,
                 rows,
-                template="(%s,%s,%s,%s::vector,%s)"
+                template="(%s, %s, %s, %s::vector, %s)"
             )
 
             conn.commit()
@@ -366,32 +366,32 @@ def process_document_indexing(document_id, file_path):
 
         update_document_status(
             document_id=document_id,
-            status="ready",
+            status=DocumentStatus.READY,
             error_message=None,
             chunk_count=inserted_count
         )
 
-        print("\nBACKGROUND INDEXING COMPLETED")
-        print("Document ID:", document_id)
-        print("Chunks inserted:", inserted_count)
+        logger.info("BACKGROUND INDEXING COMPLETED")
+        logger.info("Document ID: %s", document_id)
+        logger.info("Chunks inserted: %d", inserted_count)
 
     except Exception as error:
         error_text = str(error)
 
-        print("\nBACKGROUND INDEXING FAILED")
-        print("Document ID:", document_id)
-        print(error_text)
+        logger.error("BACKGROUND INDEXING FAILED")
+        logger.error("Document ID: %s", document_id)
+        logger.error("Error: %s", error_text)
 
         update_document_status(
             document_id=document_id,
-            status="failed",
+            status=DocumentStatus.FAILED,
             error_message=error_text,
             chunk_count=0
         )
 
 
 def cleanup_deleted_files():
-    print("\nChecking deleted files...")
+    logger.info("Checking deleted files...")
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -408,7 +408,7 @@ def cleanup_deleted_files():
 
     for document_id, file_path in rows:
         if not os.path.exists(file_path):
-            print("Removing deleted file:", file_path)
+            logger.info("Removing deleted file: %s", file_path)
 
             cursor.execute(
                 """
@@ -424,12 +424,12 @@ def cleanup_deleted_files():
     cursor.close()
     conn.close()
 
-    print("Deleted documents removed:", deleted_count)
+    logger.info("Deleted documents removed: %d", deleted_count)
 
 
 def scan_knowledge_base_once(force_reindex=False):
     if scan_lock.locked():
-        print("Scan already running.")
+        logger.info("Scan already running.")
         return []
 
     results = []
@@ -438,8 +438,8 @@ def scan_knowledge_base_once(force_reindex=False):
         ensure_folders()
         cleanup_deleted_files()
 
-        print("\nSCANNING KNOWLEDGE BASE")
-        print(os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+        logger.info("SCANNING KNOWLEDGE BASE")
+        logger.info("Folder: %s", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
 
         for root, dirs, files in os.walk(KNOWLEDGE_BASE_FOLDER):
             for filename in files:
@@ -450,12 +450,18 @@ def scan_knowledge_base_once(force_reindex=False):
 
                 result = queue_file_for_indexing(
                     file_path=file_path,
-                    source_type="knowledge_base",
+                    source_type=SourceType.KNOWLEDGE_BASE,
                     force_reindex=force_reindex
                 )
 
                 results.append(result)
-                print(result)
+
+                logger.info(
+                    "Queue result | file=%s | status=%s | scheduled=%s",
+                    result.get("filename"),
+                    result.get("status"),
+                    result.get("scheduled")
+                )
 
                 if result["scheduled"]:
                     process_document_indexing(
@@ -467,16 +473,15 @@ def scan_knowledge_base_once(force_reindex=False):
 
 
 def hourly_knowledge_base_watcher():
-    print("\nHourly watcher started")
-    print("Folder:", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
+    logger.info("Hourly watcher started")
+    logger.info("Folder: %s", os.path.abspath(KNOWLEDGE_BASE_FOLDER))
 
     while True:
         time.sleep(AUTO_SCAN_INTERVAL_SECONDS)
 
         try:
-            print("\nRunning automatic hourly scan...")
+            logger.info("Running automatic hourly scan...")
             scan_knowledge_base_once(False)
 
         except Exception as error:
-            print("Hourly watcher error")
-            print(error)
+            logger.error("Hourly watcher error: %s", error)

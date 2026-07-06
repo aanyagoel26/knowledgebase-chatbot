@@ -1,9 +1,7 @@
 import json
-
 from fastapi import APIRouter, Request, HTTPException
-
 from app.services.auth_service import require_login
-
+from app.utils.constants import AssistantMode
 from app.database.repository import (
     get_chat_sessions,
     user_owns_session,
@@ -11,12 +9,10 @@ from app.database.repository import (
 )
 
 router = APIRouter()
-
-
 @router.get("/sessions")
 def get_sessions(
         request: Request,
-        mode: str = "knowledge"):
+        mode: str = AssistantMode.KNOWLEDGE):
 
     employee = require_login(request)
 

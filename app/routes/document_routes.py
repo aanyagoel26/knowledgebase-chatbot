@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, UploadFile, File, Request, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-from models import FolderRequest
+from app.models.request_models import FolderRequest
 from app.services.auth_service import require_login
 from app.database.connection import get_db_connection
 
