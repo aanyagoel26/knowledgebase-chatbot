@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Request
 
 from app.models.request_models import ChatRequest, RetrieveRequest
-from app.services.auth_service import require_login
-from app.services.chat_service import (
+from app.services.auth.auth_service import require_login
+from app.services.chat.chat_service import (
     handle_chat_request,
     handle_retrieve_request
 )

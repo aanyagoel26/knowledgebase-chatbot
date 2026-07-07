@@ -1,5 +1,5 @@
 from app.database.connection import get_db_connection
-from app.services.auth_service import hash_password
+from app.services.auth.auth_service import hash_password
 
 
 def ensure_schema_updates():

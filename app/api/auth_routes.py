@@ -9,7 +9,7 @@ from app.database.repository import (
     upsert_employee_after_login
 )
 from app.models.request_models import LoginRequest
-from app.services.auth_service import (
+from app.services.auth.auth_service import (
     get_session_token,
     hash_password,
     is_allowed_employee_email,

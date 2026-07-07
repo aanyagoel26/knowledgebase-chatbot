@@ -1,8 +1,8 @@
 from fastapi import APIRouter, BackgroundTasks, File, Request, UploadFile
 
 from app.models.request_models import FolderRequest
-from app.services.auth_service import require_login
-from app.services.document_service_api import (
+from app.services.auth.auth_service import require_login
+from app.services.documents.document_service_api import (
     handle_clear_all_documents,
     handle_download_document,
     handle_get_documents,

@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Request
 
 from app.models.request_models import DBChatRequest
-from app.services.auth_service import require_login
-from app.services.database_assistant_service import database_assistant
-from app.services.intent_service import (
+from app.services.auth.auth_service import require_login
+from app.services.database.database_assistant_service import database_assistant
+from app.services.chat.intent_service import (
     detect_intent,
     generate_basic_chat_answer,
     is_basic_chat_intent
 )
-from app.services.session_service import (
+from app.services.sessions.session_service import (
     create_session_if_needed,
     save_message
 )

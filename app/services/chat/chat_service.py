@@ -1,16 +1,16 @@
 from app.models.request_models import ChatRequest, RetrieveRequest
-from app.services.answer_service import generate_answer
-from app.services.intent_service import (
+from app.services.chat.answer_service import generate_answer
+from app.services.chat.intent_service import (
     detect_intent,
     generate_basic_chat_answer,
     is_basic_chat_intent,
     is_summary_intent
 )
-from app.services.retrieval_service import (
+from app.services.chat.retrieval_service import (
     retrieve_document_summary_chunks,
     retrieve_relevant_chunks
 )
-from app.services.session_service import (
+from app.services.sessions.session_service import (
     create_session_if_needed,
     save_message
 )

@@ -10,8 +10,8 @@ from app.config.settings import (
     PER_DOCUMENT_VECTOR_TOP_K
 )
 from app.database.connection import get_db_connection
-from app.services.document_service import tokenize
-from app.services.embedding_service import generate_embedding
+from app.services.documents.document_service import tokenize
+from app.services.embeddings.embedding_service import generate_embedding
 from app.utils.constants import DocumentStatus
 
 

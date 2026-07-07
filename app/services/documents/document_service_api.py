@@ -13,11 +13,11 @@ from app.database.repository import (
     get_index_status_counts,
     set_app_setting
 )
-from app.services.document_service import (
+from app.services.documents.document_service import (
     calculate_file_hash,
     is_supported_file
 )
-from app.services.indexing_service import (
+from app.services.documents.indexing_service import (
     get_knowledge_base_folder,
     process_document_indexing,
     queue_file_for_indexing,

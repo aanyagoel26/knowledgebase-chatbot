@@ -7,7 +7,7 @@ from psycopg2.extras import execute_values
 from app.config.settings import AUTO_SCAN_INTERVAL_SECONDS, EMBEDDING_BATCH_SIZE
 from app.core.logger import logger
 from app.database.connection import get_db_connection
-from app.services.document_service import (
+from app.services.documents.document_service import (
     calculate_file_hash,
     clean_text,
     extract_text,
@@ -16,7 +16,7 @@ from app.services.document_service import (
     split_text_into_chunks,
     tokenize
 )
-from app.services.embedding_service import generate_embeddings_batch
+from app.services.embeddings.embedding_service import generate_embeddings_batch
 from app.utils.constants import DocumentStatus, SourceType
 
 

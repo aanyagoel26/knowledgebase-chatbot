@@ -8,7 +8,7 @@ from app.config.settings import (
 from app.core.logger import logger
 from app.database.repository import get_app_setting
 from app.database.schema import ensure_schema_updates
-from app.services.indexing_service import (
+from app.services.documents.indexing_service import (
     ensure_folders,
     get_knowledge_base_folder,
     hourly_knowledge_base_watcher,
