@@ -4,6 +4,181 @@
 <head>
     <title>Motherson Knowledge Assistant</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/kb_chat.css">
+</head>
+
+<body>
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- LOGIN PAGE -->
+    <div class="login-page" id="loginPage">
+        <div class="login-card">
+            <div class="login-logo">motherson</div>
+            <div class="login-subtitle">Enterprise Knowledge Assistant</div>
+
+            <label>Employee Email</label>
+            <input type="email" id="loginEmail" placeholder="admin@motherson.com">
+
+            <label>Password</label>
+            <input type="password" id="loginPassword" placeholder="Password">
+
+            <button class="small-btn" onclick="login()">Sign in</button>
+            <div id="loginStatus" class="error-text"></div>
+        </div>
+    </div>
+
+    <!-- APP PAGE -->
+    <div class="app" id="appPage">
+
+        <!-- SIDEBAR -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-main">
+
+                <div class="brand-box">
+                    <div class="brand-title">motherson</div>
+                    <div class="brand-subtitle">Knowledge Assistant</div>
+                </div>
+
+                <button class="new-chat-btn" onclick="newChat()">＋ New Chat</button>
+
+                <!-- DOCUMENTS -->
+                <div class="section" id="documentsSidebarSection">
+                    <div class="section-header" onclick="toggleSection('documentsSection', 'documentsArrow')">
+                        <span class="section-title-left">
+                            <span id="documentsArrow">▶</span> Documents
+                        </span>
+                        <span class="count-pill" id="documentCount">0</span>
+                    </div>
+
+                    <div class="section-content" id="documentsSection" style="display:none;">
+                        <input class="search-docs" type="text" id="docSearchInput"
+                            placeholder="Search documents..." oninput="renderDocuments()">
+
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="selectAllDocs" onchange="toggleAllDocuments()" checked>
+                            <label for="selectAllDocs">Search all ready documents</label>
+                        </div>
+
+                        <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh Documents</button>
+                        <button class="small-btn outline-btn" onclick="clearAllDocuments()">Clear All Documents</button>
+
+                        <div id="documentsList"></div>
+                    </div>
+                </div>
+
+                <!-- UPLOAD -->
+                <div class="section" id="uploadSidebarSection">
+                    <div class="section-header" onclick="toggleSection('uploadSection', 'uploadArrow')">
+                        <span class="section-title-left">
+                            <span id="uploadArrow">▶</span> Upload Files
+                        </span>
+                    </div>
+
+                    <div class="section-content" id="uploadSection" style="display:none;">
+                        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
+                        <button class="small-btn" onclick="uploadFiles()">Upload</button>
+                        <div id="uploadStatus" class="status-text"></div>
+                    </div>
+                </div>
+
+                <!-- KNOWLEDGE FOLDER -->
+                <div class="section" id="folderSidebarSection">
+                    <div class="section-header" onclick="toggleSection('folderSection', 'folderArrow')">
+                        <span class="section-title-left">
+                            <span id="folderArrow">▶</span> Knowledge Folder
+                        </span>
+                    </div>
+
+                    <div class="section-content" id="folderSection" style="display:none;">
+                        <input type="text" id="folderInput" placeholder="Paste backend folder path">
+                        <button class="small-btn" onclick="setKnowledgeFolder()">Save Folder</button>
+                        <button class="small-btn secondary-btn" onclick="indexNow()">Index Now</button>
+                        <div id="folderStatus" class="status-text"></div>
+                    </div>
+                </div>
+
+                <!-- CHAT HISTORY -->
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection('sessionsSection', 'sessionsArrow')">
+                        <span class="section-title-left">
+                            <span id="sessionsArrow">▼</span> Chat History
+                        </span>
+                    </div>
+
+                    <div class="section-content" id="sessionsSection">
+                        <div id="sessionsList"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PROFILE -->
+            <div class="profile-box">
+                <div class="profile-card">
+                    <div class="profile-name" id="profileName">Employee</div>
+                    <div class="profile-email" id="profileEmail">employee@motherson.com</div>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN CHAT AREA -->
+        <div class="main">
+
+            <!-- TOP BAR -->
+            <div class="topbar">
+                <div class="topbar-left">
+                    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+                    <div class="topbar-title">Motherson Knowledge Assistant</div>
+                </div>
+
+                <div class="mode-toggle">
+                    <button id="knowledgeModeBtn" class="active" onclick="setAssistantMode('knowledge')">
+                        Knowledge
+                    </button>
+                    <button id="databaseModeBtn" onclick="setAssistantMode('database')">
+                        Database
+                    </button>
+                </div>
+
+                <div class="topbar-status" id="systemStatus">Connected</div>
+            </div>
+
+            <!-- CHAT BOX -->
+            <div class="chat-box" id="chatBox">
+                <div class="welcome-card" id="welcomeCard">
+                    <div class="welcome-title">How can I help?</div>
+                    <div class="welcome-subtitle">
+                        Ask from indexed documents, upload files, or manually index your selected knowledge folder.
+                    </div>
+                </div>
+            </div>
+
+            <!-- INPUT AREA -->
+            <div class="input-area">
+                <div class="input-shell">
+                    <textarea id="questionInput" rows="1"
+                        placeholder="Ask anything from your knowledge base..."></textarea>
+
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+                </div>
+
+                <div class="input-hint">
+                    Press Enter to send · Shift + Enter for new line
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/kb_chat.js"></script>
+</body>
+
+</html>
+<!-- <!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Motherson Knowledge Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
         * {
@@ -1666,4 +1841,4 @@
     </script>
 </body>
 
-</html>
+</html> -->
