@@ -1,12 +1,14 @@
 import json
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
+
+from app.database.repository import (
+    get_chat_messages,
+    get_chat_sessions,
+    user_owns_session
+)
 from app.services.auth_service import require_login
 from app.utils.constants import AssistantMode
-from app.database.repository import (
-    get_chat_sessions,
-    user_owns_session,
-    get_chat_messages
-)
 
 router = APIRouter()
 @router.get("/sessions")

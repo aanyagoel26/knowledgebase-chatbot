@@ -1,4 +1,5 @@
 import json
+
 import requests
 
 from app.config.settings import CHAT_MODEL, OLLAMA_CHAT_URL

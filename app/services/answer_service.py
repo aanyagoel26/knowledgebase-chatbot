@@ -1,9 +1,6 @@
 import requests
 
-from app.config.settings import (
-    CHAT_MODEL,
-    OLLAMA_CHAT_URL
-)
+from app.config.settings import CHAT_MODEL, OLLAMA_CHAT_URL
 
 
 def build_context(chunks):

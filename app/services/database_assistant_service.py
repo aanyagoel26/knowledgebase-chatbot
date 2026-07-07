@@ -1,16 +1,17 @@
-from app.database.connection import get_db_connection
-import os
+import json
 import re
 import time
-import json
+
 import requests
+
 from app.config.settings import (
     CHAT_MODEL,
-    OLLAMA_CHAT_URL,
     MAX_ROWS,
+    OLLAMA_CHAT_URL,
     QUERY_TIMEOUT_MS,
     SENSITIVE_COLUMN_KEYWORDS
 )
+from app.database.connection import get_db_connection
 
 
 # ============================================================
@@ -18,15 +19,12 @@ from app.config.settings import (
 # ============================================================
 
 class SchemaReader:
-    def __init__(self):
-        pass
 
     def read_schema(self):
         conn = get_db_connection()
         cursor = conn.cursor()
 
         tables = self._read_tables(cursor)
-
         schema = []
 
         for table_name in tables:
@@ -66,11 +64,7 @@ class SchemaReader:
     def _read_columns(self, cursor, table_name):
         cursor.execute(
             """
-            SELECT
-                column_name,
-                data_type,
-                is_nullable,
-                column_default
+            SELECT column_name, data_type, is_nullable, column_default
             FROM information_schema.columns
             WHERE table_schema='public'
               AND table_name=%s
@@ -80,7 +74,6 @@ class SchemaReader:
         )
 
         rows = cursor.fetchall()
-
         safe_columns = []
 
         for row in rows:
@@ -138,15 +131,13 @@ class SchemaReader:
             (table_name,)
         )
 
-        rows = cursor.fetchall()
-
         return [
             {
                 "column_name": row[0],
                 "foreign_table_name": row[1],
                 "foreign_column_name": row[2]
             }
-            for row in rows
+            for row in cursor.fetchall()
         ]
 
     def _read_sample_rows(self, cursor, table_name, columns):
@@ -166,7 +157,6 @@ class SchemaReader:
             )
 
             rows = cursor.fetchall()
-
             sample_rows = []
 
             for row in rows:
@@ -193,7 +183,6 @@ class SchemaReader:
 
         for table in schema:
             table_name = table["table_name"]
-
             column_parts = []
 
             for column in table["columns"]:
@@ -240,23 +229,118 @@ class SchemaReader:
 
 
 # ============================================================
+# SIMPLE SQL ROUTER
+# ============================================================
+
+class SimpleSQLRouter:
+
+    def generate_sql(self, question):
+        q = question.lower().strip()
+
+        employee_words = [
+            "employee",
+            "employees",
+            "staff",
+            "worker",
+            "workers",
+            "people",
+            "users"
+        ]
+
+        wants_employee_table = any(word in q for word in employee_words)
+
+        name_words = [
+            "name",
+            "names"
+        ]
+
+        wants_name_only = (
+            any(word in q for word in name_words)
+            and (
+                "only" in q
+                or "no other detail" in q
+                or "do not show any other" in q
+                or "not detail" in q
+                or "not details" in q
+                or "without detail" in q
+                or "without details" in q
+            )
+        )
+
+        wants_irrespective_status = (
+            "irrespective of status" in q
+            or "irrespective of their status" in q
+            or "whether active or not" in q
+            or "active or not" in q
+            or "all status" in q
+        )
+
+        wants_inactive = (
+            "inactive" in q
+            or "not active" in q
+            or "disabled" in q
+        )
+
+        wants_admin = (
+            "admin" in q
+            or "administrator" in q
+        )
+
+        if not wants_employee_table and not wants_name_only:
+            return None
+
+        if wants_name_only:
+            selected_columns = "name"
+        else:
+            selected_columns = "name, email, role, department, is_active"
+
+        where_conditions = []
+
+        if wants_inactive:
+            where_conditions.append("is_active = FALSE")
+        elif not wants_irrespective_status:
+            where_conditions.append("is_active = TRUE")
+
+        if not wants_admin:
+            where_conditions.append("role <> 'admin'")
+
+        where_sql = ""
+
+        if where_conditions:
+            where_sql = " WHERE " + " AND ".join(where_conditions)
+
+        sql = (
+            f"SELECT {selected_columns} "
+            f"FROM employees"
+            f"{where_sql} "
+            f"ORDER BY name ASC"
+        )
+
+        return sql
+
+
+# ============================================================
 # SQL GENERATOR
 # ============================================================
 
 class SQLGenerator:
+
     def generate_sql(self, question, schema_text):
         system_prompt = """
 You are an expert PostgreSQL SQL generator for an enterprise database assistant.
 
 Rules:
-- Generate exactly one SQL query.
+- Generate exactly one PostgreSQL SELECT query.
 - Only generate SELECT or WITH queries.
 - Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, COPY, EXECUTE.
 - Use only tables and columns present in the provided schema.
 - Prefer explicit column names instead of SELECT *.
-- Use readable aliases.
 - Never select password, token, hash, secret, credential, otp, api key, or authentication-related columns.
 - If user asks for password, credentials, token, or login secret, do not generate SQL for that sensitive data.
+- If user asks for employees, return employee records from the employees table.
+- If an is_active column exists, assume the user wants active records unless they explicitly ask for inactive records.
+- Do not include admin users unless the user explicitly asks for admin users.
+- If user asks only for names, return only the name column.
 - If user asks for all records, still add LIMIT 100.
 - For counts, use COUNT(*).
 - For department-wise or category-wise questions, use GROUP BY.
@@ -299,7 +383,6 @@ Return only the PostgreSQL SQL query.
             raise Exception("SQL generation failed: " + response.text)
 
         sql = response.json()["message"]["content"].strip()
-
         sql = sql.replace("```sql", "")
         sql = sql.replace("```", "")
         sql = sql.strip()
@@ -312,6 +395,7 @@ Return only the PostgreSQL SQL query.
 # ============================================================
 
 class SQLValidator:
+
     def validate(self, sql):
         sql_clean = sql.strip().lower()
 
@@ -373,8 +457,6 @@ class SQLValidator:
 # ============================================================
 
 class SQLExecutor:
-    def __init__(self):
-        pass
 
     def execute(self, sql):
         conn = get_db_connection()
@@ -406,6 +488,7 @@ class SQLExecutor:
 # ============================================================
 
 class AnswerFormatter:
+
     def generate_answer(self, question, columns, rows):
         if not rows:
             return "No matching records were found."
@@ -426,8 +509,12 @@ class AnswerFormatter:
 # ============================================================
 
 class DatabaseAssistant:
+
+    SCHEMA_CACHE_SECONDS = 300
+
     def __init__(self):
         self.schema_reader = SchemaReader()
+        self.simple_sql_router = SimpleSQLRouter()
         self.sql_generator = SQLGenerator()
         self.sql_validator = SQLValidator()
         self.sql_executor = SQLExecutor()
@@ -438,16 +525,25 @@ class DatabaseAssistant:
         self.cached_at = None
 
     def get_schema(self):
-        if self.cached_schema is None:
+        if self.should_refresh_schema():
             self.refresh_schema()
 
         return self.cached_schema
 
     def get_schema_text(self):
-        if self.cached_schema_text is None:
+        if self.should_refresh_schema():
             self.refresh_schema()
 
         return self.cached_schema_text
+
+    def should_refresh_schema(self):
+        if self.cached_schema is None or self.cached_schema_text is None:
+            return True
+
+        if self.cached_at is None:
+            return True
+
+        return (time.time() - self.cached_at) > self.SCHEMA_CACHE_SECONDS
 
     def refresh_schema(self):
         self.cached_schema = self.schema_reader.read_schema()
@@ -474,7 +570,7 @@ class DatabaseAssistant:
             ],
             "cached_at": self.cached_at
         }
-    
+
     def answer_question(self, question: str):
         start_time = time.time()
 
@@ -485,18 +581,23 @@ class DatabaseAssistant:
                     "and credentials cannot be viewed through the assistant. "
                     "If someone forgets their password, they should use the password reset process."
                 ),
+                "sql": None,
                 "columns": [],
                 "rows": [],
                 "row_count": 0,
                 "execution_time": round(time.time() - start_time, 3)
             }
-        try:
-            schema_text = self.get_schema_text()
 
-            sql = self.sql_generator.generate_sql(
-                question,
-                schema_text
-            )
+        try:
+            sql = self.simple_sql_router.generate_sql(question)
+
+            if sql is None:
+                schema_text = self.get_schema_text()
+
+                sql = self.sql_generator.generate_sql(
+                    question,
+                    schema_text
+                )
 
             self.sql_validator.validate(sql)
 
@@ -514,6 +615,7 @@ class DatabaseAssistant:
 
             return {
                 "answer": answer,
+                "sql": safe_sql,
                 "columns": columns,
                 "rows": formatted_rows,
                 "row_count": len(rows),
@@ -526,6 +628,7 @@ class DatabaseAssistant:
                     "I could not answer this database question. "
                     "Please try asking it more clearly."
                 ),
+                "sql": None,
                 "columns": [],
                 "rows": [],
                 "row_count": 0,
@@ -548,10 +651,10 @@ class DatabaseAssistant:
             formatted_rows.append(formatted_row)
 
         return formatted_rows
-    
+
     def is_sensitive_question(self, question):
         question = question.lower()
-        
+
         sensitive_words = [
             "password",
             "pass",
@@ -566,10 +669,13 @@ class DatabaseAssistant:
             "apikey",
             "login secret"
         ]
+
         for word in sensitive_words:
             if word in question:
                 return True
+
         return False
+
 
 # ============================================================
 # SINGLE IMPORTABLE OBJECT

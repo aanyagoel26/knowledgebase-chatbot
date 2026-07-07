@@ -1,16 +1,76 @@
-from app.database.connection import get_db_connection
+import os
+import re
 
 from app.config.settings import (
-    PER_DOCUMENT_VECTOR_TOP_K,
-    PER_DOCUMENT_KEYWORD_TOP_K,
-    PER_DOCUMENT_DIRECT_TOP_K,
-    PER_DOCUMENT_CONTEXT_LIMIT,
+    MAX_CONTEXT_CHUNKS_TOTAL,
     NEIGHBOR_WINDOW,
-    MAX_CONTEXT_CHUNKS_TOTAL
+    PER_DOCUMENT_CONTEXT_LIMIT,
+    PER_DOCUMENT_DIRECT_TOP_K,
+    PER_DOCUMENT_KEYWORD_TOP_K,
+    PER_DOCUMENT_VECTOR_TOP_K
 )
-
-from app.services.embedding_service import generate_embedding
+from app.database.connection import get_db_connection
 from app.services.document_service import tokenize
+from app.services.embedding_service import generate_embedding
+from app.utils.constants import DocumentStatus
+
+
+def normalize_text_for_match(text):
+    text = text.lower()
+    text = os.path.splitext(text)[0]
+    text = re.sub(r"[_\-]+", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
+
+
+def find_matching_document_ids_from_question(question):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT document_id, original_filename
+        FROM documents
+        WHERE indexing_status=%s
+        """,
+        (DocumentStatus.READY,)
+    )
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    question_text = normalize_text_for_match(question)
+    question_words = set(tokenize(question_text))
+
+    matched_document_ids = []
+
+    for document_id, filename in rows:
+        filename_text = normalize_text_for_match(filename)
+        filename_words = [
+            word
+            for word in filename_text.split()
+            if len(word) > 2
+        ]
+
+        if not filename_words:
+            continue
+
+        matched_words = [
+            word
+            for word in filename_words
+            if word in question_words or word in question_text
+        ]
+
+        match_ratio = len(matched_words) / max(1, len(filename_words))
+
+        if len(matched_words) >= 2 or match_ratio >= 0.6:
+            matched_document_ids.append(document_id)
+
+    return matched_document_ids
 
 
 def get_ready_document_ids():
@@ -21,9 +81,10 @@ def get_ready_document_ids():
         """
         SELECT document_id
         FROM documents
-        WHERE indexing_status='ready'
+        WHERE indexing_status=%s
         ORDER BY updated_at DESC
-        """
+        """,
+        (DocumentStatus.READY,)
     )
 
     rows = cursor.fetchall()
@@ -65,14 +126,14 @@ def get_vector_rows(
         FROM document_chunks c
         JOIN documents d
         ON c.document_id=d.document_id
-        WHERE d.indexing_status='ready'
+        WHERE d.indexing_status=%s
         {filter_sql}
         ORDER BY c.embedding <=> %s::vector
         LIMIT %s
     """
 
     params = (
-        [str(question_embedding)]
+        [str(question_embedding), DocumentStatus.READY]
         + filter_params
         + [str(question_embedding), limit]
     )
@@ -116,13 +177,13 @@ def get_keyword_rows(
         FROM document_chunks c
         JOIN documents d
         ON c.document_id=d.document_id
-        WHERE d.indexing_status='ready'
+        WHERE d.indexing_status=%s
         AND ({" OR ".join(keyword_conditions)})
         {document_filter_sql}
         LIMIT %s
     """
 
-    params = params + document_filter_params + [limit]
+    params = [DocumentStatus.READY] + params + document_filter_params + [limit]
 
     cursor.execute(query, params)
 
@@ -268,13 +329,14 @@ def fetch_neighbor_chunks(cursor, ranked_chunks):
             ON c.document_id=d.document_id
             WHERE c.document_id=%s
               AND c.chunk_number BETWEEN %s AND %s
-              AND d.indexing_status='ready'
+              AND d.indexing_status=%s
             ORDER BY c.chunk_number ASC
             """,
             (
                 document_id,
                 start_chunk,
-                end_chunk
+                end_chunk,
+                DocumentStatus.READY
             )
         )
 
@@ -337,7 +399,14 @@ def retrieve_relevant_chunks(question, document_ids=None):
     if requested_document_ids:
         target_document_ids = requested_document_ids
     else:
-        target_document_ids = get_ready_document_ids()
+        matched_document_ids = find_matching_document_ids_from_question(
+            question
+        )
+
+        if matched_document_ids:
+            target_document_ids = matched_document_ids
+        else:
+            target_document_ids = get_ready_document_ids()
 
     if not target_document_ids:
         cursor.close()
@@ -429,7 +498,7 @@ def retrieve_document_summary_chunks(document_ids):
             JOIN documents d
             ON c.document_id = d.document_id
             WHERE c.document_id = %s
-              AND d.indexing_status = 'ready'
+              AND d.indexing_status = %s
               AND c.content IS NOT NULL
               AND LENGTH(TRIM(c.content)) > 30
             ORDER BY c.chunk_number ASC
@@ -437,6 +506,7 @@ def retrieve_document_summary_chunks(document_ids):
             """,
             (
                 document_id,
+                DocumentStatus.READY,
                 per_document_limit
             )
         )

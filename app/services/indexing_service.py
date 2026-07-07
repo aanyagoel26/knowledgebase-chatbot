@@ -4,23 +4,20 @@ import time
 
 from psycopg2.extras import execute_values
 
+from app.config.settings import AUTO_SCAN_INTERVAL_SECONDS, EMBEDDING_BATCH_SIZE
 from app.core.logger import logger
 from app.database.connection import get_db_connection
-from app.utils.constants import DocumentStatus, SourceType
-from app.config.settings import (
-    AUTO_SCAN_INTERVAL_SECONDS,
-    EMBEDDING_BATCH_SIZE
-)
 from app.services.document_service import (
     calculate_file_hash,
-    get_file_metadata,
     clean_text,
-    tokenize,
     extract_text,
+    get_file_metadata,
     is_supported_file,
-    split_text_into_chunks
+    split_text_into_chunks,
+    tokenize
 )
 from app.services.embedding_service import generate_embeddings_batch
+from app.utils.constants import DocumentStatus, SourceType
 
 
 scan_lock = threading.Lock()

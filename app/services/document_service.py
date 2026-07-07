@@ -1,7 +1,7 @@
-import os
-import hashlib
-import re
 import csv
+import hashlib
+import os
+import re
 from datetime import datetime
 
 import fitz
@@ -9,10 +9,7 @@ from docx import Document
 from openpyxl import load_workbook
 from pptx import Presentation
 
-from app.config.settings import (
-    MAX_CHUNK_SIZE,
-    CHUNK_OVERLAP
-)
+from app.config.settings import CHUNK_OVERLAP, MAX_CHUNK_SIZE
 
 
 def calculate_file_hash(file_path):

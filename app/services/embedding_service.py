@@ -1,9 +1,6 @@
 import requests
 
-from app.config.settings import (
-    EMBEDDING_MODEL,
-    OLLAMA_EMBED_URL
-)
+from app.config.settings import EMBEDDING_MODEL, OLLAMA_EMBED_URL
 
 
 def generate_embedding(text):

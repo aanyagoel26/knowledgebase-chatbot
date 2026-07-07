@@ -1,19 +1,18 @@
 import os
 import threading
-from app.core.logger import logger
+
 from app.config.settings import (
     AUTO_SCAN_INTERVAL_SECONDS,
     KNOWLEDGE_BASE_FOLDER as DEFAULT_KNOWLEDGE_BASE_FOLDER
 )
-
-from app.database.schema import ensure_schema_updates
+from app.core.logger import logger
 from app.database.repository import get_app_setting
-
+from app.database.schema import ensure_schema_updates
 from app.services.indexing_service import (
-    set_knowledge_base_folder,
-    get_knowledge_base_folder,
     ensure_folders,
-    hourly_knowledge_base_watcher
+    get_knowledge_base_folder,
+    hourly_knowledge_base_watcher,
+    set_knowledge_base_folder
 )
 
 

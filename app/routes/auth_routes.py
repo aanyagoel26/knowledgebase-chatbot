@@ -1,20 +1,21 @@
 import uuid
 
-from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Response
+
 from app.config.settings import AUTH_MODE
+from app.database.repository import (
+    create_employee_session,
+    logout_employee_session,
+    upsert_employee_after_login
+)
 from app.models.request_models import LoginRequest
 from app.services.auth_service import (
+    get_session_token,
     hash_password,
     is_allowed_employee_email,
-    verify_employee_locally,
+    require_login,
     verify_employee_from_company_system,
-    get_session_token,
-    require_login
-)
-from app.database.repository import (
-    upsert_employee_after_login,
-    create_employee_session,
-    logout_employee_session
+    verify_employee_locally
 )
 router = APIRouter()
 

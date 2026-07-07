@@ -1,14 +1,14 @@
 import hashlib
+
 import requests
+from fastapi import HTTPException, Request
 
-from fastapi import Request, HTTPException
-
-from app.database.connection import get_db_connection
 from app.config.settings import (
+    ALLOWED_EMPLOYEE_EMAIL_DOMAINS,
     AUTH_MODE,
-    COMPANY_EMPLOYEE_VERIFY_URL,
-    ALLOWED_EMPLOYEE_EMAIL_DOMAINS
+    COMPANY_EMPLOYEE_VERIFY_URL
 )
+from app.database.connection import get_db_connection
 
 
 def hash_password(password):
