@@ -141,12 +141,17 @@ textarea {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    transition: 0.2s;
 }
 
 .sidebar-main {
     flex: 1;
     overflow-y: auto;
     padding: 14px;
+}
+
+.sidebar-main::-webkit-scrollbar {
+    width: 8px;
 }
 
 .brand-box {
@@ -452,6 +457,7 @@ textarea {
 }
 
 .main {
+    min-width: 0;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -540,6 +546,11 @@ textarea {
     padding: 28px 24px;
     background: white;
 }
+
+.chat-box::-webkit-scrollbar {
+    width: 8px;
+}
+
 
 .welcome-card {
     max-width: 760px;
@@ -916,4 +927,74 @@ textarea {
     background: #ececec;
     color: #111827;
     border-color: var(--border);
+}
+
+/* ------------------------------------------------------------
+   ChatGPT-style drag and drop upload
+------------------------------------------------------------ */
+.drag-upload-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2500;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(17, 24, 39, 0.38);
+    backdrop-filter: blur(2px);
+}
+
+.drag-upload-overlay.active {
+    display: flex;
+}
+
+.drag-upload-card {
+    width: min(520px, calc(100vw - 40px));
+    min-height: 240px;
+    background: #ffffff;
+    border: 2px dashed var(--red);
+    border-radius: 28px;
+    box-shadow: 0 26px 90px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 30px;
+    color: #111827;
+}
+
+.drag-upload-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: var(--red-soft);
+    color: var(--red);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-bottom: 16px;
+}
+
+.drag-upload-title {
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 6px;
+}
+
+.drag-upload-subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+body.dragging-files .input-shell {
+    border-color: var(--red);
+    box-shadow: 0 0 0 4px rgba(215, 25, 32, 0.08);
+}
+
+.chat-tool-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
