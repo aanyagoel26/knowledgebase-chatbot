@@ -68,20 +68,27 @@ def create_session_if_needed(
     return new_session_id
 
 
-def save_message(session_id, role, message, sources=None):
+def save_message(session_id, role, message, sources=None, answer_payload=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        INSERT INTO chat_messages(session_id, role, message, sources_json)
-        VALUES (%s,%s,%s,%s)
+        INSERT INTO chat_messages(
+            session_id,
+            role,
+            message,
+            sources_json,
+            answer_payload_json
+        )
+        VALUES (%s,%s,%s,%s,%s)
         """,
         (
             session_id,
             role,
             message,
-            json.dumps(sources) if sources else None
+            json.dumps(sources) if sources else None,
+            json.dumps(answer_payload) if answer_payload else None
         )
     )
 

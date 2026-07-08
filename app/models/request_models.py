@@ -22,5 +22,24 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    department: str | None = None
+
+
 class FolderRequest(BaseModel):
     folder_path: str
+
+
+class SessionTitleRequest(BaseModel):
+    title: str
+
+
+class SessionPinRequest(BaseModel):
+    is_pinned: bool
+
+
+class SessionArchiveRequest(BaseModel):
+    is_archived: bool

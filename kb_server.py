@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-
+from fastapi.staticfiles import StaticFiles
 from app.config.settings import UI_FILE
 from app.core.middleware import RequestLoggingMiddleware
 from app.core.startup import startup_event
@@ -14,7 +14,7 @@ from app.api.session_routes import router as session_router
 app = FastAPI()
 
 app.add_middleware(RequestLoggingMiddleware)
-
+app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(auth_router)
 app.include_router(document_router)
 app.include_router(chat_router)

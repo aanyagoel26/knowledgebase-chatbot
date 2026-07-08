@@ -140,11 +140,17 @@ def get_chat_sessions(employee_id, assistant_mode):
         SELECT
             session_id,
             title,
-            created_at
+            created_at,
+            COALESCE(is_pinned, FALSE) AS is_pinned,
+            COALESCE(is_archived, FALSE) AS is_archived
         FROM chat_sessions
         WHERE employee_id=%s
           AND assistant_mode=%s
-        ORDER BY created_at DESC
+          AND COALESCE(is_archived, FALSE) = FALSE
+        ORDER BY
+            COALESCE(is_pinned, FALSE) DESC,
+            updated_at DESC,
+            created_at DESC
         """,
         (
             employee_id,
@@ -195,7 +201,8 @@ def get_chat_messages(session_id):
             role,
             message,
             created_at,
-            sources_json
+            sources_json,
+            answer_payload_json
         FROM chat_messages
         WHERE session_id=%s
         ORDER BY created_at ASC
@@ -337,6 +344,167 @@ def logout_employee_session(session_token):
     conn.commit()
     cursor.close()
     conn.close()
+
+
+def create_employee_account(name, email, password_hash, department=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT employee_id
+        FROM employees
+        WHERE email=%s
+        """,
+        (email,)
+    )
+
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.close()
+        conn.close()
+        return None
+
+    cursor.execute(
+        """
+        INSERT INTO employees
+        (
+            name,
+            email,
+            password_hash,
+            role,
+            department,
+            is_active
+        )
+        VALUES (%s,%s,%s,'employee',%s,TRUE)
+        RETURNING employee_id
+        """,
+        (
+            name,
+            email,
+            password_hash,
+            department
+        )
+    )
+
+    employee_id = cursor.fetchone()[0]
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return employee_id
+
+
+def update_chat_session_title(session_id, employee_id, title):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE chat_sessions
+        SET title=%s,
+            updated_at=CURRENT_TIMESTAMP
+        WHERE session_id=%s
+          AND employee_id=%s
+        """,
+        (
+            title,
+            session_id,
+            employee_id
+        )
+    )
+
+    updated = cursor.rowcount
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return updated > 0
+
+
+def update_chat_session_pin(session_id, employee_id, is_pinned):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE chat_sessions
+        SET is_pinned=%s,
+            updated_at=CURRENT_TIMESTAMP
+        WHERE session_id=%s
+          AND employee_id=%s
+        """,
+        (
+            is_pinned,
+            session_id,
+            employee_id
+        )
+    )
+
+    updated = cursor.rowcount
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return updated > 0
+
+
+def update_chat_session_archive(session_id, employee_id, is_archived):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE chat_sessions
+        SET is_archived=%s,
+            updated_at=CURRENT_TIMESTAMP
+        WHERE session_id=%s
+          AND employee_id=%s
+        """,
+        (
+            is_archived,
+            session_id,
+            employee_id
+        )
+    )
+
+    updated = cursor.rowcount
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return updated > 0
+
+
+def delete_chat_session(session_id, employee_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM chat_sessions
+        WHERE session_id=%s
+          AND employee_id=%s
+        """,
+        (
+            session_id,
+            employee_id
+        )
+    )
+
+    deleted = cursor.rowcount
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return deleted > 0
+
 
 def get_document_by_file_hash(file_hash):
     conn = get_db_connection()

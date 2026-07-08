@@ -4,11 +4,12 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.config.settings import AUTH_MODE
 from app.database.repository import (
+    create_employee_account,
     create_employee_session,
     logout_employee_session,
     upsert_employee_after_login
 )
-from app.models.request_models import LoginRequest
+from app.models.request_models import LoginRequest, SignupRequest
 from app.services.auth.auth_service import (
     get_session_token,
     hash_password,
@@ -18,6 +19,48 @@ from app.services.auth.auth_service import (
     verify_employee_locally
 )
 router = APIRouter()
+
+
+@router.post("/signup")
+def signup(request: SignupRequest):
+    name = request.name.strip()
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="Name is required."
+        )
+
+    if not is_allowed_employee_email(email):
+        raise HTTPException(
+            status_code=403,
+            detail="Only approved Motherson employee emails can sign up."
+        )
+
+    if len(password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 6 characters."
+        )
+
+    employee_id = create_employee_account(
+        name=name,
+        email=email,
+        password_hash=hash_password(password),
+        department=request.department
+    )
+
+    if employee_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email already exists."
+        )
+
+    return {
+        "message": "Account created successfully. Please sign in."
+    }
 
 
 @router.post("/login")

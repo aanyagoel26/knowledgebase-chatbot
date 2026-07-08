@@ -103,6 +103,34 @@ def ensure_schema_updates():
 
     cursor.execute(
         """
+        ALTER TABLE chat_messages
+        ADD COLUMN IF NOT EXISTS answer_payload_json TEXT;
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE chat_sessions
+        ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE chat_sessions
+        ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;
+        """
+    )
+
+    cursor.execute(
+        """
+        ALTER TABLE chat_sessions
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        """
+    )
+
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS employee_sessions (
             session_id SERIAL PRIMARY KEY,
             employee_id INTEGER REFERENCES employees(employee_id) ON DELETE CASCADE,

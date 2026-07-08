@@ -71,7 +71,14 @@ def db_chat(
         session_id,
         MessageRole.ASSISTANT,
         result["answer"],
-        []
+        [],
+        {
+            "sql": result.get("sql"),
+            "columns": result.get("columns", []),
+            "rows": result.get("rows", []),
+            "row_count": result.get("row_count", 0),
+            "execution_time": result.get("execution_time", 0)
+        }
     )
 
     result["session_id"] = session_id
