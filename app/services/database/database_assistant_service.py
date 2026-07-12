@@ -12,6 +12,7 @@ from app.config.settings import (
     SENSITIVE_COLUMN_KEYWORDS
 )
 from app.database.connection import get_db_connection
+from app.services.database.conversation_memory import conversation_memory
 
 
 # ============================================================
@@ -233,90 +234,283 @@ class SchemaReader:
 # ============================================================
 
 class SimpleSQLRouter:
+    """
+    Deterministic SQL generator for common employee-table questions.
+    This prevents the LLM from adding hidden filters such as is_active = TRUE
+    when the user did not explicitly ask for active employees.
+    """
+
+    DEPARTMENT_ALIASES = {
+        "aiml": "AIML",
+        "ai ml": "AIML",
+        "ai/ml": "AIML",
+        "ai-ml": "AIML",
+        "artificial intelligence": "AIML",
+        "machine learning": "AIML",
+        "hr": "HR",
+        "human resource": "HR",
+        "human resources": "HR",
+        "it": "IT",
+        "information technology": "IT",
+        "finance": "Finance",
+        "fin": "Finance"
+    }
 
     def generate_sql(self, question):
-        q = question.lower().strip()
+        q = self._normalize(question)
 
-        employee_words = [
-            "employee",
-            "employees",
-            "staff",
-            "worker",
-            "workers",
-            "people",
-            "users"
-        ]
-
-        wants_employee_table = any(word in q for word in employee_words)
-
-        name_words = [
-            "name",
-            "names"
-        ]
-
-        wants_name_only = (
-            any(word in q for word in name_words)
-            and (
-                "only" in q
-                or "no other detail" in q
-                or "do not show any other" in q
-                or "not detail" in q
-                or "not details" in q
-                or "without detail" in q
-                or "without details" in q
-            )
-        )
-
-        wants_irrespective_status = (
-            "irrespective of status" in q
-            or "irrespective of their status" in q
-            or "whether active or not" in q
-            or "active or not" in q
-            or "all status" in q
-        )
-
-        wants_inactive = (
-            "inactive" in q
-            or "not active" in q
-            or "disabled" in q
-        )
-
-        wants_admin = (
-            "admin" in q
-            or "administrator" in q
-        )
-
-        if not wants_employee_table and not wants_name_only:
+        if not self._is_employee_question(q):
             return None
 
-        if wants_name_only:
-            selected_columns = "name"
-        else:
-            selected_columns = "name, email, role, department, is_active"
-
+        selected_columns = self._selected_columns(q)
         where_conditions = []
 
-        if wants_inactive:
-            where_conditions.append("is_active = FALSE")
-        elif not wants_irrespective_status:
-            where_conditions.append("is_active = TRUE")
+        department = self._extract_department(q)
+        if department:
+            where_conditions.append(
+                f"department ILIKE '{self._escape_literal(department)}'"
+            )
 
-        if not wants_admin:
-            where_conditions.append("role <> 'admin'")
+        role = self._extract_role(q)
+        if role:
+            where_conditions.append(
+                f"role ILIKE '{self._escape_literal(role)}'"
+            )
+
+        status_condition = self._extract_status_condition(q)
+        if status_condition:
+            where_conditions.append(status_condition)
 
         where_sql = ""
-
         if where_conditions:
             where_sql = " WHERE " + " AND ".join(where_conditions)
 
-        sql = (
-            f"SELECT {selected_columns} "
-            f"FROM employees"
-            f"{where_sql} "
-            f"ORDER BY name ASC"
+        if self._wants_count(q):
+            return f"SELECT COUNT(*) AS count FROM employees{where_sql}"
+
+        order_sql = ""
+        if "name" in selected_columns:
+            order_sql = " ORDER BY name ASC"
+
+        return f"SELECT {', '.join(selected_columns)} FROM employees{where_sql}{order_sql}"
+
+    def _normalize(self, question):
+        return re.sub(r"\s+", " ", question.lower().strip())
+
+    def _is_employee_question(self, q):
+        employee_words = [
+            "employee", "employees", "staff", "worker", "workers",
+            "people", "users", "person", "persons"
+        ]
+
+        if any(word in q for word in employee_words):
+            return True
+
+        if self._extract_department(q):
+            return True
+
+        if self._extract_role(q):
+            return True
+
+        if self._wants_name_only(q):
+            return True
+
+        return False
+
+    def _selected_columns(self, q):
+        if self._wants_count(q):
+            return ["COUNT(*) AS count"]
+
+        if self._wants_name_only(q):
+            return ["name"]
+
+        if self._wants_email_only(q):
+            return ["email"]
+
+        return ["name", "email", "role", "department", "is_active"]
+
+    def _wants_count(self, q):
+        return (
+            "how many" in q
+            or "count" in q
+            or "number of" in q
+            or "total" in q
         )
 
+    def _wants_name_only(self, q):
+        has_name = "name" in q or "names" in q
+        only_words = [
+            "only", "just", "no other detail", "do not show any other",
+            "not detail", "not details", "without detail", "without details"
+        ]
+        return has_name and any(word in q for word in only_words)
+
+    def _wants_email_only(self, q):
+        has_email = "email" in q or "emails" in q or "mail" in q
+        only_words = ["only", "just", "no other detail", "without details"]
+        return has_email and any(word in q for word in only_words)
+
+    def _extract_department(self, q):
+        for alias, department in self.DEPARTMENT_ALIASES.items():
+            if re.search(r"\b" + re.escape(alias) + r"\b", q):
+                return department
+        return None
+
+    def _extract_role(self, q):
+        if re.search(r"\b(admin|administrator)\b", q):
+            return "admin"
+
+        if re.search(r"\b(manager|managers)\b", q):
+            return "manager"
+
+        # Do not treat the word employee as a role automatically because
+        # users often say "show employees" to mean the table, not role='employee'.
+        if "role employee" in q or "employee role" in q:
+            return "employee"
+
+        return None
+
+    def _extract_status_condition(self, q):
+        # Never add an active-status filter unless the user explicitly asks.
+        explicit_all_status = [
+            "irrespective of status", "irrespective of their status",
+            "whether active or not", "active or not", "all status",
+            "all statuses", "any status"
+        ]
+        if any(text in q for text in explicit_all_status):
+            return None
+
+        if re.search(r"\b(inactive|not active|disabled|deactivated)\b", q):
+            return "is_active = FALSE"
+
+        if re.search(r"\b(active|enabled)\b", q):
+            return "is_active = TRUE"
+
+        return None
+
+    def _escape_literal(self, value):
+        return value.replace("'", "''")
+
+# ============================================================
+# FOLLOW-UP SQL BUILDER
+# ============================================================
+
+class FollowUpSQLBuilder:
+    """Applies short follow-up instructions to the previous safe SELECT query."""
+
+    FOLLOW_UP_HINTS = (
+        "only", "just", "now", "then", "also", "instead", "sort",
+        "order", "active", "inactive", "names", "emails", "count"
+    )
+
+    def generate_sql(self, question, context):
+        previous_sql = (context or {}).get("previous_sql")
+
+        if not previous_sql:
+            return None
+
+        q = re.sub(r"\s+", " ", question.lower().strip())
+
+        if not self._looks_like_follow_up(q):
+            return None
+
+        sql = previous_sql.strip().rstrip(";")
+        sql = re.sub(r"\s+LIMIT\s+\d+\s*$", "", sql, flags=re.IGNORECASE)
+
+        if not re.match(r"^SELECT\s+", sql, flags=re.IGNORECASE):
+            return None
+
+        sql = self._change_projection(sql, q)
+        sql = self._change_status_filter(sql, q)
+        sql = self._change_sort(sql, q)
+
         return sql
+
+    def _looks_like_follow_up(self, q):
+        if len(q.split()) <= 6 and any(hint in q for hint in self.FOLLOW_UP_HINTS):
+            return True
+
+        phrases = (
+            "show only", "give only", "what about", "from them",
+            "among them", "those employees", "these employees"
+        )
+        return any(phrase in q for phrase in phrases)
+
+    def _change_projection(self, sql, q):
+        projection = None
+
+        if self._asks_count(q):
+            projection = "COUNT(*) AS count"
+        elif re.search(r"\b(names?|only names?|just names?)\b", q):
+            projection = "name"
+        elif re.search(r"\b(emails?|mails?|only emails?|just emails?)\b", q):
+            projection = "email"
+        elif "name and email" in q or "names and emails" in q:
+            projection = "name, email"
+        elif "all details" in q or "full details" in q:
+            projection = "name, email, role, department, is_active"
+
+        if not projection:
+            return sql
+
+        return re.sub(
+            r"^SELECT\s+.+?\s+FROM\s+",
+            f"SELECT {projection} FROM ",
+            sql,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+
+    def _change_status_filter(self, sql, q):
+        wants_inactive = bool(re.search(r"\b(inactive|not active|disabled|deactivated)\b", q))
+        wants_active = bool(re.search(r"\b(active|enabled)\b", q)) and not wants_inactive
+        wants_all = any(
+            phrase in q
+            for phrase in (
+                "all statuses", "any status", "active or inactive",
+                "active and inactive", "irrespective of status"
+            )
+        )
+
+        if not (wants_active or wants_inactive or wants_all):
+            return sql
+
+        sql = re.sub(
+            r"\s+AND\s+is_active\s*=\s*(TRUE|FALSE)",
+            "",
+            sql,
+            flags=re.IGNORECASE
+        )
+        sql = re.sub(
+            r"\s+WHERE\s+is_active\s*=\s*(TRUE|FALSE)\s*(?=ORDER\s+BY|$)",
+            " ",
+            sql,
+            flags=re.IGNORECASE
+        )
+
+        if wants_all:
+            return re.sub(r"\s+", " ", sql).strip()
+
+        condition = "is_active = TRUE" if wants_active else "is_active = FALSE"
+        order_match = re.search(r"\s+ORDER\s+BY\s+.+$", sql, flags=re.IGNORECASE)
+        order_sql = order_match.group(0) if order_match else ""
+        base_sql = sql[:order_match.start()] if order_match else sql
+
+        connector = " AND " if re.search(r"\bWHERE\b", base_sql, flags=re.IGNORECASE) else " WHERE "
+        return f"{base_sql.rstrip()}{connector}{condition}{order_sql}"
+
+    def _change_sort(self, sql, q):
+        if not any(word in q for word in ("sort", "order", "alphabetical", "alphabetically")):
+            return sql
+
+        descending = any(word in q for word in ("descending", "desc", "reverse", "z to a"))
+        direction = "DESC" if descending else "ASC"
+
+        sql = re.sub(r"\s+ORDER\s+BY\s+.+$", "", sql, flags=re.IGNORECASE)
+        return f"{sql.rstrip()} ORDER BY name {direction}"
+
+    def _asks_count(self, q):
+        return any(phrase in q for phrase in ("how many", "count", "number of", "total"))
 
 
 # ============================================================
@@ -338,8 +532,11 @@ Rules:
 - Never select password, token, hash, secret, credential, otp, api key, or authentication-related columns.
 - If user asks for password, credentials, token, or login secret, do not generate SQL for that sensitive data.
 - If user asks for employees, return employee records from the employees table.
-- If an is_active column exists, assume the user wants active records unless they explicitly ask for inactive records.
-- Do not include admin users unless the user explicitly asks for admin users.
+- Department filters such as AIML, HR, IT, and Finance must filter the department column only.
+- For text matching on department, role, name, or email, use ILIKE.
+- Never filter by is_active unless the user explicitly asks for active or inactive records.
+- If the user says all employees, return all matching employees regardless of active status.
+- Do not exclude admin users unless the user explicitly asks to exclude admin users.
 - If user asks only for names, return only the name column.
 - If user asks for all records, still add LIMIT 100.
 - For counts, use COUNT(*).
@@ -515,6 +712,7 @@ class DatabaseAssistant:
     def __init__(self):
         self.schema_reader = SchemaReader()
         self.simple_sql_router = SimpleSQLRouter()
+        self.follow_up_sql_builder = FollowUpSQLBuilder()
         self.sql_generator = SQLGenerator()
         self.sql_validator = SQLValidator()
         self.sql_executor = SQLExecutor()
@@ -571,7 +769,7 @@ class DatabaseAssistant:
             "cached_at": self.cached_at
         }
 
-    def answer_question(self, question: str):
+    def answer_question(self, question: str, session_id=None):
         start_time = time.time()
 
         if self.is_sensitive_question(question):
@@ -589,13 +787,25 @@ class DatabaseAssistant:
             }
 
         try:
-            sql = self.simple_sql_router.generate_sql(question)
+            context = conversation_memory.get_context(session_id)
+
+            sql = self.follow_up_sql_builder.generate_sql(
+                question,
+                context
+            )
+
+            if sql is None:
+                sql = self.simple_sql_router.generate_sql(question)
 
             if sql is None:
                 schema_text = self.get_schema_text()
+                contextual_question = self.build_contextual_question(
+                    question,
+                    context
+                )
 
                 sql = self.sql_generator.generate_sql(
-                    question,
+                    contextual_question,
                     schema_text
                 )
 
@@ -635,6 +845,21 @@ class DatabaseAssistant:
                 "execution_time": round(time.time() - start_time, 3),
                 "error": str(error)
             }
+
+    def build_contextual_question(self, question, context):
+        previous_question = (context or {}).get("previous_question")
+        previous_sql = (context or {}).get("previous_sql")
+
+        if not previous_sql:
+            return question
+
+        return (
+            f"Previous user question: {previous_question or 'Not available'}\n"
+            f"Previous generated SQL: {previous_sql}\n"
+            f"Current user question: {question}\n"
+            "Use the previous query only when the current question is a follow-up. "
+            "Do not preserve filters that the current question explicitly changes."
+        )
 
     def format_rows(self, rows):
         formatted_rows = []

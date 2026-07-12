@@ -64,7 +64,8 @@ def db_chat(
         }
 
     result = database_assistant.answer_question(
-        request_data.question
+        request_data.question,
+        session_id=session_id
     )
 
     save_message(

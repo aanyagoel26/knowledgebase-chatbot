@@ -745,7 +745,7 @@ textarea {
     margin: 0 auto;
     display: flex;
     gap: 8px;
-    align-items: flex-end;
+    align-items: center;
     border: 1px solid #d1d5db;
     border-radius: 24px;
     padding: 8px;
@@ -757,7 +757,7 @@ textarea {
     border: none;
     margin: 0;
     flex: 1;
-    min-height: 44px;
+    min-height: 24px;
     max-height: 160px;
     padding: 11px 10px;
     box-shadow: none;
@@ -930,71 +930,542 @@ textarea {
 }
 
 /* ------------------------------------------------------------
-   ChatGPT-style drag and drop upload
+   Topbar cleanup + global actions
 ------------------------------------------------------------ */
-.drag-upload-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 2500;
+.topbar {
+    gap: 18px;
+}
+
+.topbar-left {
+    flex: 1;
+}
+
+.topbar-spacer {
+    flex: 1;
+}
+
+.topbar-title {
     display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(17, 24, 39, 0.38);
-    backdrop-filter: blur(2px);
 }
 
-.drag-upload-overlay.active {
+.topbar-status {
+    display: none !important;
+}
+
+.topbar-actions {
     display: flex;
-}
-
-.drag-upload-card {
-    width: min(520px, calc(100vw - 40px));
-    min-height: 240px;
-    background: #ffffff;
-    border: 2px dashed var(--red);
-    border-radius: 28px;
-    box-shadow: 0 26px 90px rgba(0, 0, 0, 0.25);
-    display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 30px;
-    color: #111827;
+    gap: 8px;
 }
 
-.drag-upload-icon {
-    width: 58px;
-    height: 58px;
-    border-radius: 50%;
+.topbar-action-btn {
+    height: 38px;
+    background: white;
+    color: #374151;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 700;
+}
+
+.topbar-action-btn:hover {
     background: var(--red-soft);
     color: var(--red);
+    border-color: var(--red);
+}
+
+.topbar-action-btn.danger {
+    color: var(--red);
+}
+
+.sidebar-toggle-btn i {
+    font-size: 17px;
+}
+
+/* ------------------------------------------------------------
+   Cleaner document list
+------------------------------------------------------------ */
+.clickable-doc {
+    cursor: pointer;
+}
+
+.doc-row {
+    align-items: center;
+}
+
+.doc-file-icon {
+    color: #6b7280;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
-    margin-bottom: 16px;
+    width: 18px;
+    flex-shrink: 0;
 }
 
-.drag-upload-title {
-    font-size: 20px;
-    font-weight: 800;
-    margin-bottom: 6px;
+.doc-name {
+    flex: 1;
 }
 
-.drag-upload-subtitle {
-    font-size: 14px;
-    color: var(--muted);
-    line-height: 1.5;
+.doc-item:hover .doc-name,
+.doc-item:hover .doc-file-icon {
+    color: var(--red);
 }
 
-body.dragging-files .input-shell {
-    border-color: var(--red);
-    box-shadow: 0 0 0 4px rgba(215, 25, 32, 0.08);
+/* ------------------------------------------------------------
+   Chat input scrollbar cleanup
+------------------------------------------------------------ */
+.input-shell textarea {
+    overflow: hidden !important;
+    scrollbar-width: none;
+}
+
+.input-shell textarea::-webkit-scrollbar {
+    display: none;
 }
 
 .chat-tool-btn {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+.chat-tool-btn i {
+    font-size: 16px;
+}
+
+/* ------------------------------------------------------------
+   Drag and drop overlay
+------------------------------------------------------------ */
+.drop-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.38);
+    backdrop-filter: blur(4px);
+    z-index: 5000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.drop-card {
+    width: min(420px, calc(100vw - 32px));
+    background: white;
+    border: 2px dashed var(--red);
+    border-radius: 24px;
+    padding: 34px;
+    text-align: center;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+    color: #111827;
+}
+
+.drop-card i {
+    font-size: 38px;
+    color: var(--red);
+    margin-bottom: 12px;
+}
+
+.drop-card div {
+    font-weight: 800;
+    font-size: 18px;
+    margin-bottom: 6px;
+}
+
+.drop-card span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+@media (max-width: 900px) {
+    .topbar-action-btn span {
+        display: none;
+    }
+
+    .topbar-action-btn {
+        width: 38px;
+        justify-content: center;
+        padding: 0;
+    }
+}
+
+/* ------------------------------------------------------------
+   Final polish: folder picker, clean topbar, mobile responsive
+------------------------------------------------------------ */
+.folder-picker-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 12px;
+    cursor: pointer;
+    color: #374151;
+    transition: 0.15s ease;
+}
+
+.folder-picker-card:hover {
+    border-color: var(--red);
+    background: var(--red-soft);
+}
+
+.folder-picker-card i {
+    color: var(--red);
+    font-size: 20px;
+    margin-bottom: 8px;
+}
+
+.folder-picker-card div {
+    font-weight: 800;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.folder-picker-card span {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+    display: block;
+    word-break: break-word;
+}
+
+.topbar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 0 28px;
+}
+
+.topbar-left {
+    flex: unset !important;
+    display: flex;
+    align-items: center;
+}
+
+.mode-toggle {
+    justify-self: center;
+}
+
+.topbar-actions {
+    justify-self: end;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.topbar-action-btn {
+    height: 40px;
+    min-width: 40px;
+    padding: 0 12px;
+    border-radius: 14px;
+}
+
+.topbar-spacer {
+    display: none;
+}
+
+#systemStatus,
+.topbar-status {
+    display: none !important;
+}
+
+.input-shell textarea {
+    resize: none !important;
+    overflow-y: auto !important;
+}
+
+@media (max-width: 980px) {
+    .topbar-action-btn span {
+        display: none;
+    }
+
+    .topbar-action-btn {
+        width: 40px;
+        padding: 0;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 760px) {
+    body {
+        overflow: hidden;
+    }
+
+    .app {
+        position: relative;
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 82vw;
+        max-width: 320px;
+        z-index: 2200;
+        box-shadow: 16px 0 40px rgba(0, 0, 0, 0.16);
+    }
+
+    .main {
+        width: 100vw;
+        min-width: 0;
+    }
+
+    .topbar {
+        grid-template-columns: auto 1fr auto;
+        padding: 0 10px;
+        gap: 8px;
+        min-height: 58px;
+    }
+
+    .sidebar-toggle-btn,
+    .topbar-action-btn {
+        width: 38px;
+        height: 38px;
+        min-width: 38px;
+        border-radius: 12px;
+    }
+
+    .mode-toggle {
+        justify-self: center;
+        transform: scale(0.92);
+        transform-origin: center;
+    }
+
+    .mode-toggle button {
+        padding: 7px 10px;
+        font-size: 12px;
+    }
+
+    .topbar-actions {
+        gap: 4px;
+    }
+
+    .chat-box {
+        padding: 18px 12px;
+    }
+
+    .welcome-card {
+        margin-top: 70px;
+        padding: 0 8px;
+    }
+
+    .welcome-title {
+        font-size: 25px;
+    }
+
+    .welcome-subtitle {
+        font-size: 14px;
+    }
+
+    .message-wrap {
+        max-width: 100%;
+        margin-bottom: 18px;
+    }
+
+    .user-message,
+    .assistant-message {
+        max-width: 96%;
+    }
+
+    .input-area {
+        padding: 10px 10px 12px;
+    }
+
+    .input-shell {
+        max-width: 100%;
+        border-radius: 20px;
+        gap: 6px;
+        padding: 6px;
+    }
+
+    .chat-tool-btn {
+        width: 38px;
+        height: 38px;
+        min-width: 38px;
+    }
+
+    .send-btn {
+        padding: 9px 12px;
+        border-radius: 14px;
+    }
+
+    .table-wrapper {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .topbar {
+        grid-template-columns: auto 1fr auto;
+    }
+
+    .topbar-actions .topbar-action-btn:nth-child(1) {
+        display: none;
+    }
+
+    .mode-toggle {
+        transform: scale(0.85);
+    }
+
+    .send-btn {
+        font-size: 0;
+        width: 42px;
+        min-width: 42px;
+        padding: 0;
+    }
+
+    .send-btn::before {
+        content: "\f062";
+        font-family: "Font Awesome 6 Free";
+        font-weight: 900;
+        font-size: 15px;
+    }
+}
+
+
+/* ------------------------------------------------------------
+   Mobile sidebar drawer fix
+   Sidebar stays hidden on small screens until the hamburger is tapped.
+------------------------------------------------------------ */
+.sidebar-overlay {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(17, 24, 39, 0.38);
+        backdrop-filter: blur(2px);
+        opacity: 0;
+        visibility: hidden;
+        display: block;
+        transition: opacity 0.22s ease, visibility 0.22s ease;
+        z-index: 2190;
+    }
+
+    .sidebar-overlay.show {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .sidebar {
+        position: fixed !important;
+        left: -340px !important;
+        top: 0;
+        bottom: 0;
+        width: 82vw;
+        max-width: 320px;
+        height: 100vh;
+        z-index: 2200;
+        box-shadow: 16px 0 40px rgba(0, 0, 0, 0.16);
+        transition: left 0.25s ease !important;
+    }
+
+    .sidebar.open {
+        left: 0 !important;
+    }
+
+    .main {
+        width: 100vw;
+        min-width: 0;
+    }
+}
+
+
+/* ============================================================
+   FINAL RECOVERY OVERRIDES
+   Keeps the UI stable after prior experimental patches.
+============================================================ */
+.folder-path-text {
+    margin-top: 6px;
+    color: #374151 !important;
+    font-size: 12px !important;
+    line-height: 1.35;
+    word-break: break-all;
+    display: block;
+}
+
+.input-shell {
+    align-items: center !important;
+    min-height: 60px !important;
+    padding: 8px 10px !important;
+}
+
+.input-shell textarea {
+    height: 40px !important;
+    min-height: 40px !important;
+    line-height: 22px !important;
+    padding: 9px 0 !important;
+    overflow-y: hidden !important;
+    background: transparent !important;
+}
+
+.chat-tool-btn,
+.send-btn {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    padding: 0 !important;
+}
+
+.send-btn {
+    background: var(--red) !important;
+    color: #fff !important;
+    font-size: 0 !important;
+}
+
+.send-btn i {
+    font-size: 18px !important;
+}
+
+#sessionsList {
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.session-item::marker,
+#sessionsList li::marker {
+    display: none !important;
+    content: "" !important;
+}
+
+.session-icon:empty {
+    display: none !important;
+}
+
+@media (max-width: 760px) {
+    .sidebar {
+        left: -340px !important;
+    }
+
+    .sidebar.open {
+        left: 0 !important;
+    }
+
+    .input-shell {
+        min-height: 56px !important;
+        padding: 6px !important;
+    }
+
+    .chat-tool-btn,
+    .send-btn {
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px !important;
+    }
+
+    .input-shell textarea {
+        height: 38px !important;
+        min-height: 38px !important;
+        font-size: 15px !important;
+    }
 }

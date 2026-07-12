@@ -64,7 +64,6 @@ function openModal(options) {
         input.value = options.defaultValue || "";
         input.placeholder = options.placeholder || "";
         input.readOnly = Boolean(options.readOnly);
-
         setTimeout(() => {
             input.focus();
             input.select();
@@ -110,11 +109,50 @@ function closeModal() {
 ------------------------------------------------------------ */
 function toggleSidebar() {
     const sidebar = document.querySelector(".sidebar");
+    const overlay = document.getElementById("sidebarOverlay");
+    const icon = document.getElementById("sidebarToggleIcon");
 
     if (!sidebar) return;
 
+    if (window.innerWidth <= 760) {
+        sidebar.classList.toggle("open");
+
+        if (overlay) {
+            overlay.classList.toggle("show");
+        }
+
+        if (icon) {
+            icon.className = sidebar.classList.contains("open")
+                ? "fa-solid fa-xmark"
+                : "fa-solid fa-bars";
+        }
+
+        return;
+    }
+
     sidebar.style.display = sidebar.style.display === "none" ? "flex" : "none";
 }
+
+function closeSidebarMobile() {
+    if (window.innerWidth > 760) return;
+
+    const sidebar = document.querySelector(".sidebar");
+    const overlay = document.getElementById("sidebarOverlay");
+    const icon = document.getElementById("sidebarToggleIcon");
+
+    if (sidebar) {
+        sidebar.classList.remove("open");
+    }
+
+    if (overlay) {
+        overlay.classList.remove("show");
+    }
+
+    if (icon) {
+        icon.className = "fa-solid fa-bars";
+    }
+}
+
 
 function toggleSection(sectionId, arrowId) {
     const section = document.getElementById(sectionId);
@@ -144,6 +182,7 @@ async function checkLogin() {
         }
 
         const data = await response.json();
+
         employee = data.employee;
 
         await showApp();
@@ -215,6 +254,7 @@ async function login() {
         }
 
         const data = await response.json();
+
         employee = data.employee;
 
         showToast("Login successful", "success");
@@ -281,7 +321,6 @@ async function logout() {
     employee = null;
     currentSessionId = null;
     documents = [];
-    sessions = [];
     selectedDocumentIds.clear();
 
     stopAutoRefresh();
@@ -312,6 +351,10 @@ function setAssistantMode(mode) {
         questionInput.placeholder = "Ask anything from your knowledge base...";
         document.getElementById("systemStatus").innerText = "Knowledge Mode";
 
+        document.querySelectorAll(".knowledge-action").forEach((button) => {
+            button.style.display = "inline-flex";
+        });
+
     } else {
         document.getElementById("databaseModeBtn").classList.add("active");
 
@@ -321,6 +364,10 @@ function setAssistantMode(mode) {
 
         questionInput.placeholder = "Ask anything from database...";
         document.getElementById("systemStatus").innerText = "Database Mode";
+
+        document.querySelectorAll(".knowledge-action").forEach((button) => {
+            button.style.display = "none";
+        });
     }
 
     currentSessionId = null;
@@ -335,31 +382,60 @@ function setAssistantMode(mode) {
 }
 
 /* ------------------------------------------------------------
-   Knowledge folder and indexing
+   Knowledge folder
+   Uses the existing backend knowledge-folder setting.
+   No browser folder-upload input and no native Windows dialog.
 ------------------------------------------------------------ */
 async function loadKnowledgeFolder() {
+    const status = document.getElementById("folderStatus");
+    const pathText = document.getElementById("folderPathText");
+
     try {
         const response = await fetch("/knowledge-folder");
 
-        if (!response.ok) return;
+        if (!response.ok) {
+            if (status) status.innerText = "Could not load folder.";
+            if (pathText) pathText.innerText = "";
+            return;
+        }
 
         const data = await response.json();
+        const folderPath = data.folder_path || "";
 
-        document.getElementById("folderInput").value = data.folder_path || "";
-        document.getElementById("folderStatus").innerText =
-            "Current folder: " + (data.folder_path || "Not set");
+        if (folderPath) {
+            if (status) status.innerText = "Current folder";
+            if (pathText) pathText.innerText = folderPath;
+        } else {
+            if (status) status.innerText = "No folder selected";
+            if (pathText) pathText.innerText = "";
+        }
 
     } catch {
-        // Silent because folder status is not critical for page load.
+        if (status) status.innerText = "Could not load folder.";
+        if (pathText) pathText.innerText = "";
     }
 }
 
-async function setKnowledgeFolder() {
-    const folderPath = document.getElementById("folderInput").value.trim();
-    const status = document.getElementById("folderStatus");
+function openFolderPicker() {
+    const currentPath = document.getElementById("folderPathText")?.innerText || "";
 
-    if (!folderPath) {
-        status.innerText = "Please enter folder path.";
+    openModal({
+        title: "Set knowledge folder",
+        message: "Paste the local folder path that the backend should index.",
+        input: true,
+        defaultValue: currentPath,
+        placeholder: "Example: C:\Users\AANYA\OneDrive\Desktop\KB",
+        confirmText: "Save folder",
+        onConfirm: (folderPath) => saveKnowledgeFolder(folderPath)
+    });
+}
+
+async function saveKnowledgeFolder(folderPath) {
+    const status = document.getElementById("folderStatus");
+    const pathText = document.getElementById("folderPathText");
+
+    if (!folderPath || !folderPath.trim()) {
+        showToast("Please enter a valid folder path.", "warning");
         return;
     }
 
@@ -370,25 +446,30 @@ async function setKnowledgeFolder() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                folder_path: folderPath
+                folder_path: folderPath.trim()
             })
         });
 
         const data = await response.json();
 
-        status.innerText = data.message;
-
-        if (data.success) {
-            showToast("Knowledge folder saved", "success");
-            await loadDocuments();
-        } else {
-            showToast(data.message, "error");
+        if (!response.ok || data.success === false) {
+            showToast(data.message || data.detail || "Folder could not be saved.", "error");
+            return;
         }
 
+        if (status) status.innerText = "Current folder";
+        if (pathText) pathText.innerText = folderPath.trim();
+
+        showToast("Knowledge folder saved.", "success");
+        await loadDocuments();
+
     } catch {
-        status.innerText = "Failed to save folder.";
-        showToast("Failed to save folder", "error");
+        showToast("Failed to save folder.", "error");
     }
+}
+
+async function setKnowledgeFolder() {
+    openFolderPicker();
 }
 
 async function indexNow() {
@@ -527,7 +608,9 @@ function renderDocuments() {
         const disabled = (!ready || selectAll) ? "disabled" : "";
 
         const div = document.createElement("div");
-        div.className = "doc-item";
+        div.className = "doc-item clickable-doc";
+        div.onclick = () => downloadDocument(doc.document_id);
+        div.title = "Click to download";
 
         div.innerHTML = `
             <div class="doc-row">
@@ -536,18 +619,26 @@ function renderDocuments() {
                        value="${doc.document_id}"
                        ${checked}
                        ${disabled}
+                       onclick="event.stopPropagation()"
                        onchange="updateSelectedDocument(${doc.document_id}, this.checked)">
-                <a class="doc-name"
-                   href="/download-document/${doc.document_id}"
-                   target="_blank"
-                   title="Download document">
+                <span class="doc-file-icon">
+                    <i class="fa-regular fa-file-lines"></i>
+                </span>
+                <span class="doc-name">
                    ${escapeHtml(doc.filename)}
-                </a>
+                </span>
             </div>
         `;
 
         list.appendChild(div);
     });
+}
+
+
+
+function downloadDocument(documentId) {
+    closeSidebarMobile();
+    window.open(`/download-document/${documentId}`, "_blank");
 }
 
 function updateSelectedDocument(documentId, checked) {
@@ -599,17 +690,6 @@ async function uploadComposerFiles() {
     if (!input.files || input.files.length === 0) return;
 
     await uploadSelectedFiles(input, "Files uploaded from chat bar.");
-}
-
-async function uploadFiles() {
-    const input = document.getElementById("fileInput");
-
-    if (!input.files || input.files.length === 0) {
-        document.getElementById("uploadStatus").innerText = "Please select files first.";
-        return;
-    }
-
-    await uploadSelectedFiles(input, "Upload completed.");
 }
 
 async function uploadSelectedFiles(input, successMessage) {
@@ -755,6 +835,8 @@ function validateBeforeSend(question) {
 }
 
 async function sendMessage() {
+    closeSidebarMobile();
+
     const input = document.getElementById("questionInput");
     const sendBtn = document.getElementById("sendBtn");
     const question = input.value.trim();
@@ -1069,8 +1151,6 @@ function renderSessions() {
     const searchInput = document.getElementById("sessionSearchInput");
     const search = searchInput ? searchInput.value.toLowerCase() : "";
 
-    if (!list) return;
-
     list.innerHTML = "";
 
     const filteredSessions = sessions.filter((session) =>
@@ -1105,20 +1185,25 @@ function createSessionGroupTitle(title) {
 
 function createSessionItem(session) {
     const div = document.createElement("div");
+    const title = session.title || "Untitled chat";
+    const isPinned = Boolean(session.is_pinned);
 
     div.className = "session-item";
 
     div.innerHTML = `
-        <span class="session-icon">
-            ${session.is_pinned ? '<i class="fa-solid fa-thumbtack"></i>' : '<i class="fa-regular fa-comment"></i>'}
-        </span>
+        ${isPinned
+            ? `<span class="session-icon pinned-icon">
+                    <i class="fa-solid fa-thumbtack"></i>
+               </span>`
+            : ""}
 
         <span class="session-title">
-            ${escapeHtml(session.title || "Untitled chat")}
+            ${escapeHtml(title)}
         </span>
 
         <button class="session-menu-btn"
-            onclick="openSessionMenu(event, ${session.session_id}, '${escapeForAttribute(session.title || "Untitled chat")}', ${Boolean(session.is_pinned)})">
+            onclick="openSessionMenu(event, ${session.session_id}, '${escapeForAttribute(title)}', ${isPinned})"
+            title="Chat options">
             <i class="fa-solid fa-ellipsis"></i>
         </button>
     `;
@@ -1176,7 +1261,7 @@ function openSessionMenu(event, sessionId, title, isPinned) {
 
     const rect = event.target.getBoundingClientRect();
 
-    menu.style.left = Math.min(rect.left, window.innerWidth - 270) + "px";
+    menu.style.left = Math.min(rect.left, window.innerWidth - 260) + "px";
     menu.style.top = rect.bottom + 8 + "px";
     menu.style.display = "block";
 }
@@ -1327,15 +1412,14 @@ async function deleteSession(sessionId) {
 }
 
 async function loadSessionMessages(sessionId) {
+    closeSidebarMobile();
+
     currentSessionId = sessionId;
 
     try {
         const response = await fetch(`/sessions/${sessionId}/messages`);
 
-        if (!response.ok) {
-            showToast("Failed to load chat.", "error");
-            return;
-        }
+        if (!response.ok) return;
 
         const data = await response.json();
         const chatBox = document.getElementById("chatBox");
@@ -1363,6 +1447,8 @@ async function loadSessionMessages(sessionId) {
    New chat and welcome
 ------------------------------------------------------------ */
 function newChat() {
+    closeSidebarMobile();
+
     currentSessionId = null;
     selectedDocumentIds.clear();
 
@@ -1379,7 +1465,7 @@ function newChat() {
 
     const subtitle = assistantMode === "database"
         ? "Ask questions from PostgreSQL data. Results will be shown as a clean answer and table when available."
-        : "Ask from indexed documents, upload files, or manually index your selected knowledge folder.";
+        : "Ask from indexed documents, upload files, or query your database.";
 
     chatBox.innerHTML = `
         <div class="welcome-card" id="welcomeCard">
@@ -1403,13 +1489,13 @@ function startVoiceSearch() {
 
     const recognition = new SpeechRecognition();
     const input = document.getElementById("questionInput");
-    const voiceBtn = document.getElementById("voiceBtn");
 
     recognition.lang = "en-IN";
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
-    voiceBtn.innerHTML = '<i class="fa-solid fa-wave-square"></i>';
+    document.getElementById("voiceBtn").innerHTML =
+        '<i class="fa-solid fa-wave-square"></i>';
 
     recognition.onresult = function (event) {
         const transcript = event.results[0][0].transcript;
@@ -1423,10 +1509,105 @@ function startVoiceSearch() {
     };
 
     recognition.onend = function () {
-        voiceBtn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+        document.getElementById("voiceBtn").innerHTML =
+            '<i class="fa-solid fa-microphone"></i>';
     };
 
     recognition.start();
+}
+
+
+/* ------------------------------------------------------------
+   Drag and drop upload
+   Lets users drop files anywhere on the app, similar to ChatGPT.
+------------------------------------------------------------ */
+function setupDragAndDropUpload() {
+    const appPage = document.getElementById("appPage");
+    const overlay = document.getElementById("dropOverlay");
+
+    if (!appPage || !overlay) return;
+
+    let dragCounter = 0;
+
+    document.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        dragCounter += 1;
+
+        if (appPage.style.display !== "none") {
+            overlay.style.display = "flex";
+        }
+    });
+
+    document.addEventListener("dragover", (event) => {
+        event.preventDefault();
+    });
+
+    document.addEventListener("dragleave", (event) => {
+        event.preventDefault();
+        dragCounter -= 1;
+
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            overlay.style.display = "none";
+        }
+    });
+
+    document.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        dragCounter = 0;
+        overlay.style.display = "none";
+
+        if (appPage.style.display === "none") return;
+
+        const files = Array.from(event.dataTransfer.files || []);
+
+        if (files.length === 0) return;
+
+        await uploadDroppedFiles(files);
+    });
+}
+
+async function uploadDroppedFiles(files) {
+    const allowedExtensions = ["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"];
+    const validFiles = files.filter((file) => {
+        const extension = file.name.split(".").pop().toLowerCase();
+        return allowedExtensions.includes(extension);
+    });
+
+    if (validFiles.length === 0) {
+        showToast("Unsupported file type. Please upload PDF, DOCX, XLSX, CSV, PPTX, TXT or MD.", "warning");
+        return;
+    }
+
+    const status = document.getElementById("uploadStatus");
+    const formData = new FormData();
+
+    validFiles.forEach((file) => formData.append("files", file));
+
+    if (status) {
+        status.innerText = "Uploading dropped files...";
+    }
+
+    try {
+        const response = await fetch("/upload", {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (status) {
+            status.innerText = buildUploadStatusMessage(data);
+        }
+
+        showToast("Dropped files uploaded successfully.", "success");
+
+        await loadDocuments();
+        startIndexStatusPolling();
+
+    } catch {
+        showToast("Dropped file upload failed.", "error");
+    }
 }
 
 /* ------------------------------------------------------------
@@ -1454,8 +1635,11 @@ function resizeQuestionInput() {
 
     if (!input) return;
 
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    input.style.height = "40px";
+
+    if (input.scrollHeight > 40) {
+        input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    }
 }
 
 /* ------------------------------------------------------------
@@ -1475,160 +1659,6 @@ function escapeForAttribute(value) {
         .replaceAll("\\", "\\\\")
         .replaceAll("'", "\\'")
         .replaceAll('"', "&quot;");
-}
-
-
-/* ------------------------------------------------------------
-   Drag and drop upload
-   Allows users to drop files anywhere on the app, just like ChatGPT.
------------------------------------------------------------- */
-function setupDragAndDropUpload() {
-    const appPage = document.getElementById("appPage");
-
-    if (!appPage) return;
-
-    const overlay = createDragUploadOverlay();
-    let dragDepth = 0;
-
-    function hasFiles(event) {
-        return event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files");
-    }
-
-    function showOverlay() {
-        document.body.classList.add("dragging-files");
-        overlay.classList.add("active");
-    }
-
-    function hideOverlay() {
-        dragDepth = 0;
-        document.body.classList.remove("dragging-files");
-        overlay.classList.remove("active");
-    }
-
-    document.addEventListener("dragenter", (event) => {
-        if (!hasFiles(event)) return;
-
-        event.preventDefault();
-        dragDepth += 1;
-        showOverlay();
-    });
-
-    document.addEventListener("dragover", (event) => {
-        if (!hasFiles(event)) return;
-
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-        showOverlay();
-    });
-
-    document.addEventListener("dragleave", (event) => {
-        if (!hasFiles(event)) return;
-
-        dragDepth -= 1;
-
-        if (dragDepth <= 0) {
-            hideOverlay();
-        }
-    });
-
-    document.addEventListener("drop", async (event) => {
-        if (!hasFiles(event)) return;
-
-        event.preventDefault();
-        hideOverlay();
-
-        const files = Array.from(event.dataTransfer.files || []);
-
-        if (files.length === 0) return;
-
-        await uploadDroppedFiles(files);
-    });
-
-    window.addEventListener("blur", hideOverlay);
-}
-
-function createDragUploadOverlay() {
-    let overlay = document.getElementById("dragUploadOverlay");
-
-    if (overlay) {
-        return overlay;
-    }
-
-    overlay = document.createElement("div");
-    overlay.id = "dragUploadOverlay";
-    overlay.className = "drag-upload-overlay";
-    overlay.innerHTML = `
-        <div class="drag-upload-card">
-            <div class="drag-upload-icon">
-                <i class="fa-solid fa-cloud-arrow-up"></i>
-            </div>
-            <div class="drag-upload-title">Drop files to upload</div>
-            <div class="drag-upload-subtitle">
-                PDF, DOCX, XLSX, CSV, PPTX, TXT and MD files will be added to your knowledge base.
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    return overlay;
-}
-
-async function uploadDroppedFiles(files) {
-    const allowedExtensions = ["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"];
-    const validFiles = files.filter((file) => {
-        const extension = file.name.split(".").pop().toLowerCase();
-        return allowedExtensions.includes(extension);
-    });
-
-    if (validFiles.length === 0) {
-        showToast("Unsupported file type. Please upload PDF, DOCX, XLSX, CSV, PPTX, TXT or MD files.", "warning");
-        return;
-    }
-
-    if (validFiles.length !== files.length) {
-        showToast("Some unsupported files were skipped.", "warning");
-    }
-
-    const status = document.getElementById("uploadStatus");
-    const formData = new FormData();
-
-    validFiles.forEach((file) => {
-        formData.append("files", file);
-    });
-
-    if (status) {
-        status.innerText = "Uploading dropped files...";
-    }
-
-    try {
-        const response = await fetch("/upload", {
-            method: "POST",
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.detail || "Upload failed");
-        }
-
-        if (status) {
-            status.innerText = buildUploadStatusMessage(data);
-        }
-
-        showToast(`${validFiles.length} file(s) uploaded successfully.`, "success");
-
-        await loadDocuments();
-        startIndexStatusPolling();
-
-    } catch {
-        if (status) {
-            status.innerText = "Upload failed.";
-        }
-
-        showToast("Dropped file upload failed.", "error");
-    }
 }
 
 /* ------------------------------------------------------------

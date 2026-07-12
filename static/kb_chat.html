@@ -11,6 +11,14 @@
 <body>
     <div class="toast-container" id="toastContainer"></div>
 
+    <div class="drop-overlay" id="dropOverlay">
+        <div class="drop-card">
+            <i class="fa-solid fa-file-arrow-up"></i>
+            <div>Drop files here to upload</div>
+            <span>PDF, DOCX, XLSX, CSV, PPTX, TXT, MD</span>
+        </div>
+    </div>
+
     <div class="modal-backdrop" id="modalBackdrop">
         <div class="modal-card" id="modalCard">
             <div class="modal-title" id="modalTitle">Confirm action</div>
@@ -64,6 +72,8 @@
     </div>
 
     <div class="app" id="appPage">
+        <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebarMobile()"></div>
+
         <div class="sidebar" id="sidebar">
             <div class="sidebar-main">
                 <div class="brand-box">
@@ -88,25 +98,11 @@
                             <label for="selectAllDocs">Search all ready documents</label>
                         </div>
 
-                        <button class="small-btn secondary-btn" onclick="loadDocuments()">Refresh Documents</button>
-                        <button class="small-btn outline-btn" onclick="openClearDocumentsModal()">Clear All
-                            Documents</button>
 
                         <div id="documentsList"></div>
                     </div>
                 </div>
 
-                <div class="section" id="uploadSidebarSection">
-                    <div class="section-header" onclick="toggleSection('uploadSection', 'uploadArrow')">
-                        <span class="section-title-left"><span id="uploadArrow">▶</span> Upload Files</span>
-                    </div>
-
-                    <div class="section-content" id="uploadSection" style="display:none;">
-                        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md">
-                        <button class="small-btn" onclick="uploadFiles()">Upload</button>
-                        <div id="uploadStatus" class="status-text"></div>
-                    </div>
-                </div>
 
                 <div class="section" id="folderSidebarSection">
                     <div class="section-header" onclick="toggleSection('folderSection', 'folderArrow')">
@@ -114,10 +110,14 @@
                     </div>
 
                     <div class="section-content" id="folderSection" style="display:none;">
-                        <input type="text" id="folderInput" placeholder="Paste backend folder path">
-                        <button class="small-btn" onclick="setKnowledgeFolder()">Save Folder</button>
-                        <button class="small-btn secondary-btn" onclick="indexNow()">Index Now</button>
-                        <div id="folderStatus" class="status-text"></div>
+                        <div class="folder-picker-card" onclick="openFolderPicker()">
+                            <i class="fa-solid fa-folder-open"></i>
+                            <div>Knowledge folder</div>
+                            <span id="folderStatus">No folder selected</span>
+                            <span class="folder-path-text" id="folderPathText"></span>
+                        </div>
+
+                        <button class="small-btn" onclick="openFolderPicker()">Change Folder</button>
                     </div>
                 </div>
 
@@ -147,9 +147,8 @@
             <div class="topbar">
                 <div class="topbar-left">
                     <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">
-                        <i class="fa-solid fa-table-columns"></i>
+                        <i class="fa-solid fa-bars" id="sidebarToggleIcon"></i>
                     </button>
-                    <div class="topbar-title">Motherson Knowledge Assistant</div>
                 </div>
 
                 <div class="mode-toggle">
@@ -161,7 +160,24 @@
                     </button>
                 </div>
 
-                <div class="topbar-status" id="systemStatus">Connected</div>
+                <div class="topbar-actions">
+                    <button class="topbar-action-btn knowledge-action" onclick="loadDocuments()" title="Refresh documents">
+                        <i class="fa-solid fa-rotate-right"></i>
+                        <span>Refresh</span>
+                    </button>
+
+                    <button class="topbar-action-btn knowledge-action" onclick="indexNow()" title="Index documents now">
+                        <i class="fa-solid fa-bolt"></i>
+                        <span>Index</span>
+                    </button>
+
+                    <button class="topbar-action-btn danger knowledge-action" onclick="openClearDocumentsModal()" title="Clear all documents">
+                        <i class="fa-solid fa-trash"></i>
+                        <span>Clear</span>
+                    </button>
+                </div>
+
+                <div class="topbar-status" id="systemStatus" style="display:none;">Connected</div>
             </div>
 
             <div class="chat-box" id="chatBox">
@@ -188,7 +204,9 @@
                         <i class="fa-solid fa-microphone"></i>
                     </button>
 
-                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send message">
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </button>
                 </div>
 
                 <input type="file" id="composerFileInput" multiple accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt,.md"
