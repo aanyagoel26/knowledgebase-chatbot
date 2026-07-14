@@ -131,7 +131,8 @@ def clear_document_tables():
 # CHAT REPOSITORY
 # ============================================================
 
-def get_chat_sessions(employee_id, assistant_mode):
+def get_chat_sessions(employee_id, assistant_mode, archived=False):
+    """Return either active or archived chats for one employee and mode."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -146,23 +147,18 @@ def get_chat_sessions(employee_id, assistant_mode):
         FROM chat_sessions
         WHERE employee_id=%s
           AND assistant_mode=%s
-          AND COALESCE(is_archived, FALSE) = FALSE
+          AND COALESCE(is_archived, FALSE)=%s
         ORDER BY
             COALESCE(is_pinned, FALSE) DESC,
             updated_at DESC,
             created_at DESC
         """,
-        (
-            employee_id,
-            assistant_mode
-        )
+        (employee_id, assistant_mode, archived)
     )
 
     rows = cursor.fetchall()
-
     cursor.close()
     conn.close()
-
     return rows
 
 

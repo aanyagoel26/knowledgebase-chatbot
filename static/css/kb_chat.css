@@ -1469,3 +1469,8 @@ textarea {
         font-size: 15px !important;
     }
 }
+
+
+/* Folder picker and archived chat states */
+.archived-session-item { opacity: 0.72; }
+.archived-session-item:hover { opacity: 1; }

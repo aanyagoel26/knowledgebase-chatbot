@@ -14,7 +14,6 @@ from app.config.settings import (
 from app.database.connection import get_db_connection
 from app.services.database.conversation_memory import conversation_memory
 
-
 # ============================================================
 # SCHEMA READER
 # ============================================================

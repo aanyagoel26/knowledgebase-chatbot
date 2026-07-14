@@ -117,7 +117,8 @@
                             <span class="folder-path-text" id="folderPathText"></span>
                         </div>
 
-                        <button class="small-btn" onclick="openFolderPicker()">Change Folder</button>
+                        <button class="small-btn" onclick="openFolderPicker()">Browse Folder</button>
+                        <input type="file" id="folderFallbackInput" webkitdirectory directory multiple hidden onchange="uploadFallbackFolder(this)">
                     </div>
                 </div>
 

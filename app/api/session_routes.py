@@ -25,13 +25,15 @@ router = APIRouter()
 @router.get("/sessions")
 def get_sessions(
         request: Request,
-        mode: str = AssistantMode.KNOWLEDGE):
+        mode: str = AssistantMode.KNOWLEDGE,
+        archived: bool = False):
 
     employee = require_login(request)
 
     rows = get_chat_sessions(
         employee["employee_id"],
-        mode
+        mode,
+        archived
     )
 
     sessions = []
@@ -184,7 +186,11 @@ def archive_session(
         )
 
     return {
-        "message": "Chat archived successfully."
+        "message": (
+            "Chat archived successfully."
+            if request_data.is_archived
+            else "Chat restored successfully."
+        )
     }
 
 

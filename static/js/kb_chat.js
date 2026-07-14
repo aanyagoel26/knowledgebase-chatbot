@@ -9,6 +9,7 @@ let selectedDocumentIds = new Set();
 let activeSessionMenuId = null;
 let activeModalCallback = null;
 let sessions = [];
+let archivedSessions = [];
 
 /* ------------------------------------------------------------
    Toast helper
@@ -389,87 +390,122 @@ function setAssistantMode(mode) {
 async function loadKnowledgeFolder() {
     const status = document.getElementById("folderStatus");
     const pathText = document.getElementById("folderPathText");
+    const selectedFolderName = localStorage.getItem("selectedKnowledgeFolderName");
 
-    try {
-        const response = await fetch("/knowledge-folder");
+    if (selectedFolderName) {
+        if (status) status.innerText = "Selected folder";
+        if (pathText) pathText.innerText = selectedFolderName;
+        return;
+    }
 
-        if (!response.ok) {
-            if (status) status.innerText = "Could not load folder.";
-            if (pathText) pathText.innerText = "";
+    if (status) status.innerText = "No folder selected";
+    if (pathText) pathText.innerText = "";
+}
+
+async function openFolderPicker() {
+    if ("showDirectoryPicker" in window) {
+        try {
+            const directoryHandle = await window.showDirectoryPicker({mode: "read"});
+            await uploadDirectoryHandle(directoryHandle);
+            return;
+        } catch (error) {
+            if (error && error.name === "AbortError") return;
+            showToast("Could not open the selected folder.", "error");
             return;
         }
-
-        const data = await response.json();
-        const folderPath = data.folder_path || "";
-
-        if (folderPath) {
-            if (status) status.innerText = "Current folder";
-            if (pathText) pathText.innerText = folderPath;
-        } else {
-            if (status) status.innerText = "No folder selected";
-            if (pathText) pathText.innerText = "";
-        }
-
-    } catch {
-        if (status) status.innerText = "Could not load folder.";
-        if (pathText) pathText.innerText = "";
     }
+
+    const fallbackInput = document.getElementById("folderFallbackInput");
+    if (fallbackInput) fallbackInput.click();
 }
 
-function openFolderPicker() {
-    const currentPath = document.getElementById("folderPathText")?.innerText || "";
-
-    openModal({
-        title: "Set knowledge folder",
-        message: "Paste the local folder path that the backend should index.",
-        input: true,
-        defaultValue: currentPath,
-        placeholder: "Example: C:\Users\AANYA\OneDrive\Desktop\KB",
-        confirmText: "Save folder",
-        onConfirm: (folderPath) => saveKnowledgeFolder(folderPath)
-    });
-}
-
-async function saveKnowledgeFolder(folderPath) {
+async function uploadDirectoryHandle(directoryHandle) {
+    const files = [];
     const status = document.getElementById("folderStatus");
     const pathText = document.getElementById("folderPathText");
 
-    if (!folderPath || !folderPath.trim()) {
-        showToast("Please enter a valid folder path.", "warning");
+    if (status) status.innerText = "Reading folder...";
+    if (pathText) pathText.innerText = directoryHandle.name;
+
+    await collectSupportedDirectoryFiles(directoryHandle, files);
+
+    if (files.length === 0) {
+        if (status) status.innerText = "No supported files found";
+        showToast("No supported files found in this folder.", "warning");
+        return;
+    }
+
+    await uploadFolderFiles(files, directoryHandle.name);
+}
+
+async function collectSupportedDirectoryFiles(directoryHandle, outputFiles) {
+    const supported = new Set(["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"]);
+
+    for await (const entry of directoryHandle.values()) {
+        if (entry.kind === "directory") {
+            await collectSupportedDirectoryFiles(entry, outputFiles);
+            continue;
+        }
+
+        const extension = entry.name.split(".").pop().toLowerCase();
+        if (supported.has(extension)) outputFiles.push(await entry.getFile());
+    }
+}
+
+async function uploadFallbackFolder(input) {
+    if (!input.files || input.files.length === 0) return;
+
+    const supported = new Set(["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"]);
+    const files = Array.from(input.files).filter((file) => supported.has(file.name.split(".").pop().toLowerCase()));
+    const relativePath = input.files[0].webkitRelativePath || "";
+    const folderName = relativePath.split("/")[0] || "Selected folder";
+    input.value = "";
+
+    if (files.length === 0) {
+        showToast("No supported files found in this folder.", "warning");
+        return;
+    }
+
+    await uploadFolderFiles(files, folderName);
+}
+
+async function uploadFolderFiles(files, folderName) {
+    const status = document.getElementById("folderStatus");
+    const pathText = document.getElementById("folderPathText");
+    const batchSize = 100;
+
+    if (files.length > 2000) {
+        showToast("Please choose a smaller folder with at most 2,000 supported files.", "warning");
         return;
     }
 
     try {
-        const response = await fetch("/set-knowledge-folder", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                folder_path: folderPath.trim()
-            })
-        });
+        for (let startIndex = 0; startIndex < files.length; startIndex += batchSize) {
+            const batch = files.slice(startIndex, startIndex + batchSize);
+            const formData = new FormData();
+            batch.forEach((file) => formData.append("files", file));
 
-        const data = await response.json();
+            if (status) status.innerText = `Uploading ${Math.min(startIndex + batch.length, files.length)} of ${files.length} files...`;
 
-        if (!response.ok || data.success === false) {
-            showToast(data.message || data.detail || "Folder could not be saved.", "error");
-            return;
+            const response = await fetch("/upload", {method: "POST", body: formData});
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || "Folder upload failed.");
         }
 
-        if (status) status.innerText = "Current folder";
-        if (pathText) pathText.innerText = folderPath.trim();
-
-        showToast("Knowledge folder saved.", "success");
+        localStorage.setItem("selectedKnowledgeFolderName", folderName);
+        if (status) status.innerText = `${files.length} file(s) queued for indexing`;
+        if (pathText) pathText.innerText = folderName;
+        showToast("Folder uploaded successfully. Indexing has started.", "success");
         await loadDocuments();
-
-    } catch {
-        showToast("Failed to save folder.", "error");
+        startIndexStatusPolling();
+    } catch (error) {
+        if (status) status.innerText = "Folder upload failed";
+        showToast(error.message || "Folder upload failed.", "error");
     }
 }
 
 async function setKnowledgeFolder() {
-    openFolderPicker();
+    await openFolderPicker();
 }
 
 async function indexNow() {
@@ -1131,48 +1167,54 @@ function submitFeedback(type) {
 ------------------------------------------------------------ */
 async function loadSessions() {
     try {
-        const response = await fetch(`/sessions?mode=${assistantMode}`);
+        const [activeResponse, archivedResponse] = await Promise.all([
+            fetch(`/sessions?mode=${assistantMode}&archived=false`),
+            fetch(`/sessions?mode=${assistantMode}&archived=true`)
+        ]);
 
-        if (!response.ok) return;
+        if (!activeResponse.ok || !archivedResponse.ok) return;
 
-        const data = await response.json();
-
-        sessions = data.sessions || [];
-
+        const activeData = await activeResponse.json();
+        const archivedData = await archivedResponse.json();
+        sessions = activeData.sessions || [];
+        archivedSessions = archivedData.sessions || [];
         renderSessions();
-
     } catch {
-        // Ignore session load failure.
+        // Session history is non-critical during initial page load.
     }
 }
 
 function renderSessions() {
     const list = document.getElementById("sessionsList");
     const searchInput = document.getElementById("sessionSearchInput");
-    const search = searchInput ? searchInput.value.toLowerCase() : "";
+    const search = searchInput ? searchInput.value.trim().toLowerCase() : "";
+    if (!list) return;
 
     list.innerHTML = "";
+    const matches = (session) => String(session.title || "").toLowerCase().includes(search);
+    const active = sessions.filter(matches);
+    const archived = archivedSessions.filter(matches);
+    const pinned = active.filter((session) => session.is_pinned);
+    const recent = active.filter((session) => !session.is_pinned);
 
-    const filteredSessions = sessions.filter((session) =>
-        String(session.title || "").toLowerCase().includes(search)
-    );
-
-    if (filteredSessions.length === 0) {
+    if (!pinned.length && !recent.length && !archived.length) {
         list.innerHTML = "<div class='empty-state'>No chat history found.</div>";
         return;
     }
 
-    const pinnedSessions = filteredSessions.filter((session) => session.is_pinned);
-    const recentSessions = filteredSessions.filter((session) => !session.is_pinned);
-
-    if (pinnedSessions.length > 0) {
+    if (pinned.length) {
         list.appendChild(createSessionGroupTitle("Pinned"));
-        pinnedSessions.forEach((session) => list.appendChild(createSessionItem(session)));
+        pinned.forEach((session) => list.appendChild(createSessionItem(session)));
     }
 
-    if (recentSessions.length > 0) {
+    if (recent.length) {
         list.appendChild(createSessionGroupTitle("Recents"));
-        recentSessions.forEach((session) => list.appendChild(createSessionItem(session)));
+        recent.forEach((session) => list.appendChild(createSessionItem(session)));
+    }
+
+    if (archived.length) {
+        list.appendChild(createSessionGroupTitle("Archived"));
+        archived.forEach((session) => list.appendChild(createSessionItem(session)));
     }
 }
 
@@ -1187,8 +1229,9 @@ function createSessionItem(session) {
     const div = document.createElement("div");
     const title = session.title || "Untitled chat";
     const isPinned = Boolean(session.is_pinned);
+    const isArchived = Boolean(session.is_archived);
 
-    div.className = "session-item";
+    div.className = isArchived ? "session-item archived-session-item" : "session-item";
 
     div.innerHTML = `
         ${isPinned
@@ -1202,7 +1245,7 @@ function createSessionItem(session) {
         </span>
 
         <button class="session-menu-btn"
-            onclick="openSessionMenu(event, ${session.session_id}, '${escapeForAttribute(title)}', ${isPinned})"
+            onclick="openSessionMenu(event, ${session.session_id}, '${escapeForAttribute(title)}', ${isPinned}, ${isArchived})"
             title="Chat options">
             <i class="fa-solid fa-ellipsis"></i>
         </button>
@@ -1219,7 +1262,7 @@ function createSessionItem(session) {
     return div;
 }
 
-function openSessionMenu(event, sessionId, title, isPinned) {
+function openSessionMenu(event, sessionId, title, isPinned, isArchived) {
     event.stopPropagation();
 
     closeSessionMenu();
@@ -1246,9 +1289,9 @@ function openSessionMenu(event, sessionId, title, isPinned) {
             ${isPinned ? "Unpin chat" : "Pin chat"}
         </button>
 
-        <button onclick="archiveSession(${sessionId})">
-            <i class="fa-solid fa-box-archive"></i>
-            Archive
+        <button onclick="setSessionArchived(${sessionId}, ${!isArchived})">
+            <i class="fa-solid ${isArchived ? "fa-box-open" : "fa-box-archive"}"></i>
+            ${isArchived ? "Unarchive" : "Archive"}
         </button>
 
         <button class="danger" onclick="openDeleteSessionModal(${sessionId})">
@@ -1352,31 +1395,25 @@ async function pinSession(sessionId, isPinned) {
     }
 }
 
-async function archiveSession(sessionId) {
+async function setSessionArchived(sessionId, isArchived) {
     closeSessionMenu();
 
     try {
         const response = await fetch(`/sessions/${sessionId}/archive`, {
             method: "PATCH",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                is_archived: true
-            })
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({is_archived: isArchived})
         });
 
-        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not update chat.");
 
-        if (currentSessionId === sessionId) {
-            newChat();
-        }
+        if (isArchived && currentSessionId === sessionId) newChat();
 
-        showToast("Chat archived.", "success");
+        showToast(isArchived ? "Chat archived." : "Chat restored to Recents.", "success");
         await loadSessions();
-
-    } catch {
-        showToast("Failed to archive chat.", "error");
+    } catch (error) {
+        showToast(error.message || "Could not update chat.", "error");
     }
 }
 
