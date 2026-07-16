@@ -1,607 +1,391 @@
-# KnowledgeBase Chatbot 
-                                   ┌──────────────────────────────┐
-                                   │          START               │
-                                   │  User opens KB Chatbot UI    │
-                                   └──────────────┬───────────────┘
-                                                  │
-                                                  ▼
-                                   ┌───────────────────────────────┐
-                                   │      FastAPI Server Starts    │
-                                   │ uvicorn kb_server:app --reload│
-                                   └──────────────┬────────────────┘
-                                                  │
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │        startup_event()       │
-                                   └──────────────┬───────────────┘
-                                                  │
-                       ┌──────────────────────────┴──────────────────────────┐
-                       ▼                                                     ▼
-        ┌──────────────────────────────┐                      ┌──────────────────────────────┐
-        │      ensure_folders()        │                      │   ensure_schema_updates()    │
-        │ Creates knowledge_base folder│                      │ Adds production DB columns   │
-        └──────────────┬───────────────┘                      └──────────────┬───────────────┘
-                       │                                                     │
-                       ▼                                                     ▼
-        ┌──────────────────────────────┐                      ┌──────────────────────────────┐
-        │ knowledge_base/ is ready     │                      │ documents table updated      │
-        │ Uploaded docs stored here    │                      │ indexing_status              │
-        │                              │                      │ error_message                │
-        │                              │                      │ chunk_count                  │
-        └──────────────┬───────────────┘                      └──────────────┬───────────────┘
-                       │                                                     │
-                       └──────────────────────────┬──────────────────────────┘
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │       Backend is Ready       │
-                                   └──────────────────────────────┘
+# Enterprise Knowledge & Database Assistant
 
+An enterprise-grade AI assistant that combines **Retrieval-Augmented Generation (RAG)** with **natural language database querying**, enabling employees to retrieve information from internal documents and enterprise databases through a single intelligent interface.
 
+Built with **FastAPI**, **PostgreSQL**, **pgvector**, **Ollama**, and a lightweight responsive frontend.
 
-# FLOW 1: USER UPLOADS A DOCUMENT
+---
 
+## Overview
 
-┌───────────────────────────────┐
-│ User selects files in UI      │
-│ PDF/DOCX/XLSX/CSV/PPTX/TXT/MD │
-└──────────────┬────────────────┘
-               │
-               ▼
-┌───────────────────────────────┐
-│ Frontend uploadFiles()        │
-│ Creates FormData              │
-│ formData.append("files",file) │
-└──────────────┬────────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ POST /upload                 │
-│ FastAPI receives files       │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌───────────────────────────────┐
-│ ensure_folders()              │
-│ Confirms knowledge_base exists│
-└──────────────┬────────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Read uploaded files from form│
-│ form.getlist("files")        │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ For each uploaded file       │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ safe_filename = basename     │
-│ Prevents unsafe path usage   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ save_path = knowledge_base/  │
-│ File saved in knowledge_base │
-└──────────────┬───────────────┘
-               │
-               ▼
-        ┌──────────────────────┐
-        │ is_supported_file()? │
-        └──────────┬───────────┘
-                   │
-        ┌──────────┴───────────┐
-        │                      │
-        ▼                      ▼
-┌───────────────┐     ┌──────────────────────────────┐
-│ NO            │     │ YES                          │
-│ unsupported   │     │ queue_file_for_indexing()    │
-│ return status │     └──────────────┬───────────────┘
-└───────────────┘                    │
-                                     ▼
-                      ┌──────────────────────────────┐
-                      │ Calculate metadata           │
-                      │ file_size                    │
-                      │ last_modified                │
-                      │ SHA256 hash                  │
-                      └──────────────┬───────────────┘
-                                     │
-                                     ▼
-                      ┌──────────────────────────────┐
-                      │ Check documents table by path│
-                      │ WHERE file_path = save_path  │
-                      └──────────────┬───────────────┘
-                                     │
-              ┌──────────────────────┴────────────────────────┐
-              │                                               │
-              ▼                                               ▼
-┌──────────────────────────────┐                ┌──────────────────────────────┐
-│ Same path exists             │                │ Same path does not exist     │
-└──────────────┬───────────────┘                └──────────────┬───────────────┘
-               │                                               │
-               ▼                                               ▼
-┌──────────────────────────────┐                ┌──────────────────────────────┐
-│ Compare old hash/size/time   │                │ Check same hash in DB        │
-└──────────────┬───────────────┘                │ WHERE file_hash = current    │
-               │                                └──────────────┬───────────────┘
-        ┌──────┴───────────────┐                               │
-        │                      │                      ┌─────────┴─────────────┐
-        ▼                      ▼                      │                       │
-┌────────────────┐  ┌───────────────────────────┐     ▼                       ▼
-│ Same content   │  │ Content changed           │ ┌────────────────┐  ┌──────────────────────────────┐
-│ status ready?  │  │ version = version + 1     │ │ Same hash found│  │ Completely new file          │
-└───────┬────────┘  │ status = pending          │ └───────┬────────┘  └──────────────┬───────────────┘
-        │           │ scheduled = true          │         │                          │
-        ▼           └──────────────┬────────────┘         ▼                          ▼
-┌────────────────┐                 │             ┌────────────────┐      ┌──────────────────────────────┐
-│ Skip indexing  │                 │             │ Duplicate file │      │ Insert row into documents    │
-│ Return skipped │                 │             │ Skip indexing  │      │ status = pending             │
-└────────────────┘                 │             └────────────────┘      │ chunk_count = 0              │
-                                   │                                     │ error_message = NULL         │
-                                   │                                     └──────────────┬───────────────┘
-                                   │                                                     │
-                                   └──────────────────────────┬──────────────────────────┘
-                                                              ▼
-                                           ┌──────────────────────────────┐
-                                           │ background_tasks.add_task()  │
-                                           │ process_document_indexing()  │
-                                           └──────────────┬───────────────┘
-                                                          │
-                                                          ▼
-                                           ┌──────────────────────────────┐
-                                           │ Upload API returns quickly   │
-                                           │ "Indexing in background"     │
-                                           └──────────────────────────────┘
+Traditional enterprise systems separate document search from structured database queries. This project unifies both workflows into a single AI-powered assistant.
 
+Users can:
 
+- Ask questions about company documents
+- Retrieve context-aware answers with source citations
+- Query enterprise databases using natural language
+- View structured SQL results securely
+- Maintain persistent chat history
+- Manage document indexing through a clean interface
 
-# FLOW 2: BACKGROUND INDEXING
+---
 
-┌──────────────────────────────┐
-│ process_document_indexing()  │
-│ Runs in background           │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ update_document_status()     │
-│ status = indexing            │
-│ chunk_count = 0              │
-│ error_message = NULL         │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ extract_text(file_path)      │
-│ Detects file extension       │
-└──────────────┬───────────────┘
-               │
- ┌─────────────┼─────────────────────────────────────────────────────┐
- ▼             ▼             ▼             ▼            ▼            ▼
-PDF           DOCX          XLSX          CSV          PPTX         TXT/MD
- │             │             │             │            │            │
- ▼             ▼             ▼             ▼            ▼            ▼
-fitz          python-docx    openpyxl      csv.reader   pptx         open()
- │             │             │             │            │            │
- └─────────────┴─────────────┴─────────────┴────────────┴────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Raw extracted text           │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ clean_text()                 │
-│ remove \r                    │
-│ normalize spaces             │
-│ normalize extra newlines     │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ split_text_into_chunks()     │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ recursive_split()            │
-│ Tries to split naturally by: │
-│ paragraph → line → sentence  │
-│ semicolon → comma → space    │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ add_overlap()                │
-│ Adds 100 char overlap        │
-│ Prevents context break       │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Final chunks ready           │
-│ Example: 2745 chunks         │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Open PostgreSQL connection   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ DELETE old chunks            │
-│ WHERE document_id = current  │
-│ Used for re-indexing/version │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Process chunks in batches    │
-│ EMBEDDING_BATCH_SIZE = 16    │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ generate_embeddings_batch()  │
-│ Calls Ollama /api/embed      │
-│ input = [chunk1..chunk16]    │
-└──────────────┬───────────────┘
-               │
-      ┌────────┴───────────┐
-      │                    │
-      ▼                    ▼
-┌──────────────┐   ┌──────────────────────────────┐
-│ Batch works  │   │ Batch fails                  │
-│ embeddings[] │   │ fallback generate_embedding()│
-└──────┬───────┘   └──────────────┬───────────────┘
-       │                          │
-       └────────────┬─────────────┘
-                    ▼
-     ┌──────────────────────────────┐
-     │ Prepare rows for DB insert   │
-     │ document_id                  │
-     │ chunk_number                 │
-     │ content                      │
-     │ embedding vector             │
-     │ token_count                  │
-     └──────────────┬───────────────┘
-                    │
-                    ▼
-     ┌──────────────────────────────┐
-     │ execute_values()             │
-     │ Bulk insert into             │
-     │ document_chunks              │
-     └──────────────┬───────────────┘
-                    │
-                    ▼
-     ┌──────────────────────────────┐
-     │ All batches completed        │
-     └──────────────┬───────────────┘
-                    │
-                    ▼
-     ┌──────────────────────────────┐
-     │ update_document_status()     │
-     │ status = ready               │
-     │ chunk_count = inserted_count │
-     │ error_message = NULL         │
-     └──────────────┬───────────────┘
-                    │
-                    ▼
-     ┌──────────────────────────────┐
-     │ Document is searchable       │
-     └──────────────────────────────┘
+# Features
 
+## Knowledge Assistant
 
-If any error happens:
-               │
-               ▼
-┌──────────────────────────────┐
-│ Exception caught             │
-│ status = failed              │
-│ error_message = actual error │
-│ chunk_count = 0              │
-└──────────────────────────────┘
+- Hybrid Retrieval-Augmented Generation (Hybrid RAG)
+- Semantic document retrieval
+- Context-aware responses
+- Source citations
+- Download referenced documents
+- Folder-based document indexing
+- Manual indexing support
+- Voice input
+- Persistent conversations
+- Chat pinning & archiving
+- Responsive interface
 
+---
 
+## Database Assistant
 
-# FLOW 3: FRONTEND DOCUMENT STATUS
+- Natural Language → SQL
+- Secure read-only query execution
+- Structured table rendering
+- SQL generated automatically
+- AI generated summaries
+- Copy responses
+- Session based conversations
 
-┌──────────────────────────────┐
-│ Frontend calls GET /documents│
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Backend reads documents table│
-│ returns:                     │
-│ document_id                  │
-│ filename                     │
-│ source_type                  │
-│ version                      │
-│ indexing_status              │
-│ error_message                │
-│ chunk_count                  │
-└──────────────┬───────────────┘
-               │
-               ▼
-        ┌───────────────────────┐
-        │ Frontend checks status│
-        └──────────┬────────────┘
-                   │
-      ┌────────────┼─────────────┐
-      ▼            ▼             ▼
-READY             PENDING/INDEXING FAILED
- │                │                │
- ▼                ▼                ▼
-Checkbox enabled  Checkbox disabled Checkbox disabled
-Green badge       Auto-refresh       Show error
-Can ask question  every 5 seconds    Cannot ask
+---
 
+## Authentication
 
+- Employee registration
+- Login
+- Session management
+- Protected API routes
 
-# FLOW 4: USER ASKS QUESTION
+---
 
+## Screenshots
 
-┌──────────────────────────────┐
-│ User types question          │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Frontend validateBeforeSend()│
-└──────────────┬───────────────┘
-               │
-      ┌────────┴─────────────────────────────────┐
-      │                                          │
-      ▼                                          ▼
-┌──────────────────────────────┐       ┌──────────────────────────────┐
-│ No ready document available  │       │ Ready document available     │
-│ Show warning                 │       │ Continue                     │
-└──────────────────────────────┘       └──────────────┬───────────────┘
-                                                      │
-                                                      ▼
-                                   ┌──────────────────────────────┐
-                                   │ Build payload                │
-                                   │ question                     │
-                                   │ session_id                   │
-                                   │ document_ids                 │
-                                   └──────────────┬───────────────┘
-                                                  │
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │ POST /chat                   │
-                                   └──────────────┬───────────────┘
-                                                  │
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │ create_session_if_needed()   │
-                                   └──────────────┬───────────────┘
-                                                  │
-                      ┌───────────────────────────┴───────────────────────────┐
-                      ▼                                                       ▼
-       ┌──────────────────────────────┐                        ┌──────────────────────────────┐
-       │ session_id exists            │                        │ session_id is NULL           │
-       │ Continue old chat            │                        │ Create new chat_sessions row │
-       └──────────────┬───────────────┘                        └──────────────┬───────────────┘
-                      │                                                       │
-                      └───────────────────────────┬───────────────────────────┘
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │ save_message()               │
-                                   │ role = user                  │
-                                   │ message = question           │
-                                   └──────────────┬───────────────┘
-                                                  │
-                                                  ▼
-                                   ┌──────────────────────────────┐
-                                   │ retrieve_relevant_chunks()   │
-                                   └──────────────────────────────┘
+### Login
 
+![Login](screenshots/signup.png)
 
+---
 
-# FLOW 5: BALANCED MULTI-DOCUMENT RETRIEVAL
+### Knowledge Assistant
 
-┌──────────────────────────────┐
-│ retrieve_relevant_chunks()   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Determine document scope     │
-└──────────────┬───────────────┘
-               │
-       ┌───────┴────────────────┐
-       │                        │
-       ▼                        ▼
-┌──────────────────────┐  ┌──────────────────────────────┐
-│ document_ids provided│  │ document_ids empty           │
-│ Use selected docs    │  │ get_ready_document_ids()     │
-│ only                 │  │ Use all ready documents      │
-└──────────┬───────────┘  └──────────────┬───────────────┘
-           │                             │
-           └──────────────┬──────────────┘
-                          ▼
-           ┌──────────────────────────────┐
-           │ target_document_ids ready    │
-           └──────────────┬───────────────┘
-                          │
-                          ▼
-           ┌──────────────────────────────┐
-           │ For EACH document_id         │
-           └──────────────┬───────────────┘
-                          │
-          ┌───────────────┼───────────────────────────────┐
-          ▼               ▼                               ▼
-┌────────────────┐ ┌────────────────────────┐ ┌──────────────────────────────┐
-│ Vector Search  │ │ Keyword Search         │ │ Merge Results                │
-│ meaning search │ │ exact word search      │ │ remove duplicate chunks      │
-└───────┬────────┘ └───────────┬────────────┘ └──────────────┬───────────────┘
-        │                      │                             │
-        ▼                      ▼                             ▼
-┌────────────────┐ ┌────────────────────────┐ ┌──────────────────────────────┐
-│ Generate       │ │ tokenize(question)     │ │ chunk_id used as unique key  │
-│ question vector│ │ ILIKE matching         │ └──────────────┬───────────────┘
-└───────┬────────┘ └───────────┬────────────┘                │
-        │                      │                             ▼
-        ▼                      ▼              ┌──────────────────────────────┐
-┌─────────────────────────────────────┐       │ rerank_chunks()              │
-│ Search document_chunks with pgvector│       │ final_score =                │
-│ embedding <=> question_embedding    │       │ keyword_hits                 │
-└─────────────────────────────────────┘       │ + vector_score               │
-                                              │ + source_bonus               │
-                                              │ + exact_phrase_bonus         │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ Pick top direct chunks       │
-                                              │ PER_DOCUMENT_DIRECT_TOP_K    │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ fetch_neighbor_chunks()      │
-                                              │ If chunk 10 selected         │
-                                              │ include 8,9,10,11,12         │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ build_context_chunks_for_doc │
-                                              │ Sort by chunk_number         │
-                                              │ Limit per document           │
-                                              │ Limit per document           │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ Add to final context chunks  │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ Repeat for next document     │
-                                              └──────────────┬───────────────┘
-                                                             │
-                                                             ▼
-                                              ┌──────────────────────────────┐
-                                              │ Final context from all docs  │
-                                              │ Max 32 chunks total          │
-                                              └──────────────────────────────┘
+![Knowledge Assistant](screenshots/knowledge-home.png)
 
+---
 
+### Knowledge Sources
 
-# FLOW 6: LLM ANSWER GENERATION
+Every response includes the documents used to generate the answer.
 
-┌──────────────────────────────┐
-│ generate_answer()            │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Build context_parts          │
-│ Source 1                     │
-│ Document ID                  │
-│ File                         │
-│ Chunk                        │
-│ Content                      │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌───────────────────────────────┐
-│ Build system_prompt           │
-│ Rules:                        │
-│ - use only KB content         │
-│ - do not hallucinate          │
-│ - consider all docs           │
-│ - mention doc-wise difference │
-└──────────────┬────────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Build user_prompt            │
-│ Context + User question      │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ POST Ollama /api/chat        │
-│ model = qwen2.5:7b           │
-│ stream = false               │
-└──────────────┬───────────────┘
-               │
-       ┌───────┴───────────┐
-       │                   │
-       ▼                   ▼
-┌──────────────┐    ┌──────────────────────────────┐
-│ Success      │    │ Failed                       │
-│ answer text  │    │ raise Chat model failed      │
-└──────┬───────┘    └──────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────┐
-│ save_message()               │
-│ role = assistant             │
-│ message = answer             │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Return response to frontend  │
-│ answer                       │
-│ sources                      │
-│ session_id                   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Frontend displays            │
-│ answer + source cards        │
-└──────────────────────────────┘
+![Knowledge Sources](screenshots/knowledge-sources.png)
 
+---
 
+### Database Assistant
 
-# FLOW 7: CHAT HISTORY
+Ask questions in natural language and retrieve structured data directly from PostgreSQL.
 
-┌──────────────────────────────┐
-│ GET /sessions                │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Read chat_sessions table     │
-│ return all sessions          │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Frontend shows chat history  │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ User clicks one session      │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ GET /sessions/{id}/messages  │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Read chat_messages table     │
-│ role=user/assistant          │
-│ message                      │
-│ created_at                   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ Frontend reloads conversation│
-└──────────────────────────────┘
+![Database Assistant](screenshots/database-mode.png)
+
+---
+
+### Folder Selection
+
+Browse and index knowledge folders directly from the interface.
+
+![Folder Selection](screenshots/folder-selection.png)
+
+---
+
+# Architecture
+
+```
+                           User
+                            │
+                            ▼
+                    FastAPI Backend
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+        ▼                   ▼                   ▼
+ Authentication      Knowledge Service    Database Service
+        │                   │                   │
+        │            Hybrid RAG Engine      PostgreSQL
+        │                   │
+        │              pgvector Search
+        │                   │
+        │              Ollama LLM
+        │
+        ▼
+ Session Management
+```
+
+---
+
+# Technology Stack
+
+## Backend
+
+- FastAPI
+- Python
+- PostgreSQL
+- pgvector
+
+## AI
+
+- Ollama
+- Hybrid RAG
+- Semantic Search
+- Sentence Transformers
+
+## Frontend
+
+- HTML
+- CSS
+- JavaScript
+
+## Database
+
+- PostgreSQL
+- pgvector
+
+---
+
+# Project Structure
+
+```
+enterprise-knowledge-assistant/
+
+│
+├── app/
+│   ├── api/
+│   ├── config/
+│   ├── core/
+│   ├── database/
+│   ├── models/
+│   ├── services/
+│   └── utils/
+│
+├── static/
+│   ├── css/
+│   ├── js/
+│   └── kb_chat.html
+│
+├── knowledge_base/
+├── logs/
+│
+├── main.py
+├── requirements.txt
+├── README.md
+└── .env.example
+```
+
+---
+
+# Installation
+
+## Clone the repository
+
+```bash
+git clone https://github.com/aanyagoel26/knowledgebase-chatbot.git
+
+cd enterprise-knowledge-assistant
+```
+
+---
+
+## Create Virtual Environment
+
+```bash
+python -m venv venv
+```
+
+Windows
+
+```bash
+venv\Scripts\activate
+```
+
+Linux / macOS
+
+```bash
+source venv/bin/activate
+```
+
+---
+
+## Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Configure Environment
+
+Create a `.env` file based on:
+
+```
+.env.example
+```
+
+Configure:
+
+- PostgreSQL credentials
+- Ollama endpoint
+- Vector database settings
+
+---
+
+## Run
+
+```bash
+uvicorn main:app --reload
+```
+
+Application will start at
+
+```
+http://127.0.0.1:8000
+```
+
+---
+
+# Workflow
+
+```
+User Question
+
+      │
+
+      ▼
+
+FastAPI API
+
+      │
+
+      ├───────────────┐
+      │               │
+
+Knowledge        Database
+
+      │               │
+
+Hybrid RAG    SQL Generator
+
+      │               │
+
+Ollama      PostgreSQL
+
+      │               │
+
+      └───────Answer──┘
+```
+
+---
+
+# Key Features
+
+- Hybrid RAG
+- Semantic Search
+- Natural Language SQL
+- Enterprise Authentication
+- PostgreSQL Integration
+- pgvector Support
+- Voice Input
+- Source Citations
+- Folder Indexing
+- Manual Re-indexing
+- Chat History
+- Chat Pinning
+- Chat Archiving
+- Responsive Design
+- Secure API
+- Download Referenced Documents
+
+---
+
+# API Overview
+
+## Authentication
+
+```
+POST /signup
+POST /login
+POST /logout
+```
+
+---
+
+## Knowledge
+
+```
+POST /chat
+POST /upload
+POST /index-now
+
+GET /documents
+GET /knowledge-folder
+GET /index-status
+```
+
+---
+
+## Database
+
+```
+POST /database-chat
+```
+
+---
+
+## Sessions
+
+```
+GET /sessions
+POST /sessions/pin
+POST /sessions/archive
+DELETE /sessions
+```
+
+---
+
+# Security
+
+- Session-based authentication
+- Protected API routes
+- Read-only database assistant
+- Local document processing
+- Local LLM inference using Ollama
+- Environment variable based configuration
+
+---
+
+# Future Improvements
+
+- Streaming AI responses
+- Multi-user role based access control
+- Single Sign-On (SSO)
+- Document versioning
+- Advanced analytics dashboard
+- Docker deployment
+- Kubernetes support
+- CI/CD pipeline
+
+---
+
+# Author
+
+## Aanya Goel
+
+Built as a full-stack enterprise AI assistant integrating Retrieval-Augmented Generation with intelligent database querying using FastAPI, PostgreSQL, pgvector and Ollama.
+
+---
+
+# License
+
+This repository is intended for educational and portfolio purposes.
+
+Please ensure that any company-specific branding, documents or proprietary information are removed before public distribution.

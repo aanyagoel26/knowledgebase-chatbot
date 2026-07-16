@@ -110,15 +110,38 @@
                     </div>
 
                     <div class="section-content" id="folderSection" style="display:none;">
-                        <div class="folder-picker-card" onclick="openFolderPicker()">
-                            <i class="fa-solid fa-folder-open"></i>
-                            <div>Knowledge folder</div>
-                            <span id="folderStatus">No folder selected</span>
-                            <span class="folder-path-text" id="folderPathText"></span>
+                        <div class="folder-info-card" id="folderInfoCard" title="No folder selected">
+                            <div class="folder-info-icon">
+                                <i class="fa-solid fa-folder-open"></i>
+                            </div>
+
+                            <div class="folder-info-content">
+                                <div class="folder-info-label">Current folder</div>
+
+                                <div class="folder-info-path" id="folderPathText">
+                                    No folder selected
+                                </div>
+
+                                <div class="folder-info-status">
+                                    <span class="folder-status-dot not-selected" id="folderStatusDot"></span>
+                                    <span id="folderStatusText">Select a folder to begin</span>
+                                </div>
+                            </div>
                         </div>
 
-                        <button class="small-btn" onclick="openFolderPicker()">Browse Folder</button>
-                        <input type="file" id="folderFallbackInput" webkitdirectory directory multiple hidden onchange="uploadFallbackFolder(this)">
+                        <button class="small-btn folder-browse-btn" type="button" onclick="openFolderPicker()">
+                            <i class="fa-solid fa-folder-plus"></i>
+                            Browse Folder
+                        </button>
+
+                        <input
+                            type="file"
+                            id="folderFallbackInput"
+                            webkitdirectory
+                            directory
+                            multiple
+                            hidden
+                            onchange="uploadFallbackFolder(this)">
                     </div>
                 </div>
 

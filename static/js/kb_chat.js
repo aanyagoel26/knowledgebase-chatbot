@@ -388,49 +388,143 @@ function setAssistantMode(mode) {
    No browser folder-upload input and no native Windows dialog.
 ------------------------------------------------------------ */
 async function loadKnowledgeFolder() {
-    const status = document.getElementById("folderStatus");
-    const pathText = document.getElementById("folderPathText");
-    const selectedFolderName = localStorage.getItem("selectedKnowledgeFolderName");
+    try {
+        const response = await fetch("/knowledge-folder");
 
-    if (selectedFolderName) {
-        if (status) status.innerText = "Selected folder";
-        if (pathText) pathText.innerText = selectedFolderName;
+        if (!response.ok) {
+            throw new Error("Could not load the knowledge folder.");
+        }
+
+        const data = await response.json();
+        const folderPath = String(data.folder_path || "").trim();
+
+        if (!folderPath) {
+            updateFolderCard({
+                path: "",
+                status: "not-selected",
+                message: "Select a folder to begin"
+            });
+            return;
+        }
+
+        updateFolderCard({
+            path: folderPath,
+            status: "ready",
+            message: "Folder configured"
+        });
+
+    } catch (error) {
+        updateFolderCard({
+            path: "",
+            status: "error",
+            message: "Could not load folder information"
+        });
+
+        console.error("Knowledge folder load failed:", error);
+    }
+}
+
+function updateFolderCard({
+    path = "",
+    status = "not-selected",
+    message = ""
+}) {
+    const card = document.getElementById("folderInfoCard");
+    const pathText = document.getElementById("folderPathText");
+    const statusDot = document.getElementById("folderStatusDot");
+    const statusText = document.getElementById("folderStatusText");
+
+    if (!card || !pathText || !statusDot || !statusText) {
         return;
     }
 
-    if (status) status.innerText = "No folder selected";
-    if (pathText) pathText.innerText = "";
+    card.classList.remove("has-folder", "indexing", "error");
+    statusDot.classList.remove("ready", "indexing", "error", "not-selected");
+
+    if (path) {
+        pathText.innerText = path;
+        pathText.title = path;
+        card.title = path;
+    } else {
+        pathText.innerText = "No folder selected";
+        pathText.title = "";
+        card.title = "No folder selected";
+    }
+
+    if (status === "ready") {
+        card.classList.add("has-folder");
+        statusDot.classList.add("ready");
+    } else if (status === "indexing") {
+        card.classList.add("indexing");
+        statusDot.classList.add("indexing");
+    } else if (status === "error") {
+        card.classList.add("error");
+        statusDot.classList.add("error");
+    } else {
+        statusDot.classList.add("not-selected");
+    }
+
+    statusText.innerText = message;
+}
+
+function getCurrentFolderPath() {
+    const pathText = document.getElementById("folderPathText");
+
+    if (!pathText) {
+        return "";
+    }
+
+    return pathText.title || (
+        pathText.innerText === "No folder selected"
+            ? ""
+            : pathText.innerText
+    );
 }
 
 async function openFolderPicker() {
     if ("showDirectoryPicker" in window) {
         try {
-            const directoryHandle = await window.showDirectoryPicker({mode: "read"});
+            const directoryHandle = await window.showDirectoryPicker({
+                mode: "read"
+            });
+
             await uploadDirectoryHandle(directoryHandle);
             return;
         } catch (error) {
-            if (error && error.name === "AbortError") return;
+            if (error && error.name === "AbortError") {
+                return;
+            }
+
             showToast("Could not open the selected folder.", "error");
             return;
         }
     }
 
     const fallbackInput = document.getElementById("folderFallbackInput");
-    if (fallbackInput) fallbackInput.click();
+
+    if (fallbackInput) {
+        fallbackInput.click();
+    }
 }
 
 async function uploadDirectoryHandle(directoryHandle) {
     const files = [];
-    const status = document.getElementById("folderStatus");
-    const pathText = document.getElementById("folderPathText");
 
-    if (status) status.innerText = "Reading folder...";
-    if (pathText) pathText.innerText = directoryHandle.name;
+    updateFolderCard({
+        path: directoryHandle.name,
+        status: "indexing",
+        message: "Reading selected folder..."
+    });
 
     await collectSupportedDirectoryFiles(directoryHandle, files);
 
     if (files.length === 0) {
-        if (status) status.innerText = "No supported files found";
+        updateFolderCard({
+            path: directoryHandle.name,
+            status: "error",
+            message: "No supported files found"
+        });
+
         showToast("No supported files found in this folder.", "warning");
         return;
     }
@@ -439,7 +533,9 @@ async function uploadDirectoryHandle(directoryHandle) {
 }
 
 async function collectSupportedDirectoryFiles(directoryHandle, outputFiles) {
-    const supported = new Set(["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"]);
+    const supported = new Set([
+        "pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"
+    ]);
 
     for await (const entry of directoryHandle.values()) {
         if (entry.kind === "directory") {
@@ -447,21 +543,47 @@ async function collectSupportedDirectoryFiles(directoryHandle, outputFiles) {
             continue;
         }
 
-        const extension = entry.name.split(".").pop().toLowerCase();
-        if (supported.has(extension)) outputFiles.push(await entry.getFile());
+        const extension = entry.name
+            .split(".")
+            .pop()
+            .toLowerCase();
+
+        if (supported.has(extension)) {
+            outputFiles.push(await entry.getFile());
+        }
     }
 }
 
 async function uploadFallbackFolder(input) {
-    if (!input.files || input.files.length === 0) return;
+    if (!input.files || input.files.length === 0) {
+        return;
+    }
 
-    const supported = new Set(["pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"]);
-    const files = Array.from(input.files).filter((file) => supported.has(file.name.split(".").pop().toLowerCase()));
+    const supported = new Set([
+        "pdf", "docx", "xlsx", "csv", "pptx", "txt", "md"
+    ]);
+
+    const files = Array.from(input.files).filter((file) => {
+        const extension = file.name
+            .split(".")
+            .pop()
+            .toLowerCase();
+
+        return supported.has(extension);
+    });
+
     const relativePath = input.files[0].webkitRelativePath || "";
     const folderName = relativePath.split("/")[0] || "Selected folder";
+
     input.value = "";
 
     if (files.length === 0) {
+        updateFolderCard({
+            path: folderName,
+            status: "error",
+            message: "No supported files found"
+        });
+
         showToast("No supported files found in this folder.", "warning");
         return;
     }
@@ -470,37 +592,95 @@ async function uploadFallbackFolder(input) {
 }
 
 async function uploadFolderFiles(files, folderName) {
-    const status = document.getElementById("folderStatus");
-    const pathText = document.getElementById("folderPathText");
     const batchSize = 100;
 
     if (files.length > 2000) {
-        showToast("Please choose a smaller folder with at most 2,000 supported files.", "warning");
+        updateFolderCard({
+            path: folderName,
+            status: "error",
+            message: "Folder contains too many supported files"
+        });
+
+        showToast(
+            "Please choose a smaller folder with at most 2,000 supported files.",
+            "warning"
+        );
         return;
     }
 
+    updateFolderCard({
+        path: folderName,
+        status: "indexing",
+        message: `Uploading 0 of ${files.length} files...`
+    });
+
     try {
-        for (let startIndex = 0; startIndex < files.length; startIndex += batchSize) {
-            const batch = files.slice(startIndex, startIndex + batchSize);
+        for (
+            let startIndex = 0;
+            startIndex < files.length;
+            startIndex += batchSize
+        ) {
+            const batch = files.slice(
+                startIndex,
+                startIndex + batchSize
+            );
+
             const formData = new FormData();
-            batch.forEach((file) => formData.append("files", file));
 
-            if (status) status.innerText = `Uploading ${Math.min(startIndex + batch.length, files.length)} of ${files.length} files...`;
+            batch.forEach((file) => {
+                formData.append("files", file);
+            });
 
-            const response = await fetch("/upload", {method: "POST", body: formData});
+            const uploadedCount = Math.min(
+                startIndex + batch.length,
+                files.length
+            );
+
+            updateFolderCard({
+                path: folderName,
+                status: "indexing",
+                message: `Uploading ${uploadedCount} of ${files.length} files...`
+            });
+
+            const response = await fetch("/upload", {
+                method: "POST",
+                body: formData
+            });
+
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || "Folder upload failed.");
+
+            if (!response.ok) {
+                throw new Error(
+                    data.detail || "Folder upload failed."
+                );
+            }
         }
 
-        localStorage.setItem("selectedKnowledgeFolderName", folderName);
-        if (status) status.innerText = `${files.length} file(s) queued for indexing`;
-        if (pathText) pathText.innerText = folderName;
-        showToast("Folder uploaded successfully. Indexing has started.", "success");
+        updateFolderCard({
+            path: folderName,
+            status: "indexing",
+            message: `${files.length} file(s) queued for indexing`
+        });
+
+        showToast(
+            "Folder uploaded successfully. Indexing has started.",
+            "success"
+        );
+
         await loadDocuments();
         startIndexStatusPolling();
+
     } catch (error) {
-        if (status) status.innerText = "Folder upload failed";
-        showToast(error.message || "Folder upload failed.", "error");
+        updateFolderCard({
+            path: folderName,
+            status: "error",
+            message: "Folder upload failed"
+        });
+
+        showToast(
+            error.message || "Folder upload failed.",
+            "error"
+        );
     }
 }
 
@@ -509,12 +689,21 @@ async function setKnowledgeFolder() {
 }
 
 async function indexNow() {
-    const status = document.getElementById("folderStatus");
+    const currentPath = getCurrentFolderPath();
 
-    status.innerText = "Manual indexing started...";
+    updateFolderCard({
+        path: currentPath,
+        status: "indexing",
+        message: "Manual indexing started..."
+    });
+
     wasIndexing = true;
 
-    document.getElementById("systemStatus").innerText = "Indexing...";
+    const systemStatus = document.getElementById("systemStatus");
+
+    if (systemStatus) {
+        systemStatus.innerText = "Indexing...";
+    }
 
     try {
         const response = await fetch("/index-now", {
@@ -523,14 +712,32 @@ async function indexNow() {
 
         const data = await response.json();
 
-        status.innerText = data.message;
+        if (!response.ok) {
+            throw new Error(
+                data.detail || data.message || "Failed to start indexing."
+            );
+        }
+
+        updateFolderCard({
+            path: currentPath,
+            status: "indexing",
+            message: data.message || "Indexing in progress"
+        });
 
         showToast("Indexing started", "success");
         startIndexStatusPolling();
 
-    } catch {
-        status.innerText = "Failed to start indexing.";
-        showToast("Failed to start indexing", "error");
+    } catch (error) {
+        updateFolderCard({
+            path: currentPath,
+            status: "error",
+            message: "Indexing could not be started"
+        });
+
+        showToast(
+            error.message || "Failed to start indexing",
+            "error"
+        );
     }
 }
 
@@ -538,27 +745,56 @@ async function checkIndexStatus() {
     try {
         const response = await fetch("/index-status");
 
-        if (!response.ok) return;
+        if (!response.ok) {
+            return;
+        }
 
         const data = await response.json();
+        const currentPath = getCurrentFolderPath();
+        const systemStatus = document.getElementById("systemStatus");
 
         if (data.running) {
             wasIndexing = true;
 
-            document.getElementById("systemStatus").innerText =
-                `Indexing... Pending: ${data.pending}, Running: ${data.indexing}`;
+            if (systemStatus) {
+                systemStatus.innerText =
+                    `Indexing... Pending: ${data.pending || 0}, Running: ${data.indexing || 0}`;
+            }
+
+            updateFolderCard({
+                path: currentPath,
+                status: "indexing",
+                message:
+                    `Indexing: ${data.pending || 0} pending, ${data.indexing || 0} running`
+            });
 
             await loadDocuments();
+            return;
+        }
 
-        } else {
-            document.getElementById("systemStatus").innerText =
-                assistantMode === "knowledge" ? "Knowledge Mode" : "Database Mode";
+        if (systemStatus) {
+            systemStatus.innerText =
+                assistantMode === "knowledge"
+                    ? "Knowledge Mode"
+                    : "Database Mode";
+        }
 
-            if (wasIndexing) {
-                showToast("Indexing completed. Documents are ready.", "success");
-                wasIndexing = false;
-                await loadDocuments();
-            }
+        if (currentPath) {
+            updateFolderCard({
+                path: currentPath,
+                status: "ready",
+                message: "Folder indexed and ready"
+            });
+        }
+
+        if (wasIndexing) {
+            showToast(
+                "Indexing completed. Documents are ready.",
+                "success"
+            );
+
+            wasIndexing = false;
+            await loadDocuments();
         }
 
     } catch {
